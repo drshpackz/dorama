@@ -23,12 +23,12 @@
     ];
   }
 
-  // Merge recommendation result arrays: dedupe by id, drop the seed anchors,
+  // Merge recommendation result arrays: dedupe by id, drop any id in `excludeIds`,
   // cap at `cap` items. Tolerates null/empty lists.
-  function mergeRecommendations(lists, anchorIds, cap) {
+  function mergeRecommendations(lists, excludeIds, cap) {
     var seen = {}, out = [], i, j, items, it;
     if (cap <= 0) return out;
-    for (i = 0; i < anchorIds.length; i++) seen[anchorIds[i]] = true;
+    for (i = 0; i < excludeIds.length; i++) seen[excludeIds[i]] = true;
     for (i = 0; i < lists.length; i++) {
       items = lists[i] || [];
       for (j = 0; j < items.length; j++) {
