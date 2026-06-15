@@ -47,12 +47,13 @@
   // cap at `cap` items. Tolerates null/empty lists.
   function mergeRecommendations(lists, anchorIds, cap) {
     var seen = {}, out = [], i, j, items, it;
+    if (cap <= 0) return out;
     for (i = 0; i < anchorIds.length; i++) seen[anchorIds[i]] = true;
     for (i = 0; i < lists.length; i++) {
       items = lists[i] || [];
       for (j = 0; j < items.length; j++) {
         it = items[j];
-        if (!it || seen[it.id]) continue;
+        if (!it || it.id == null || seen[it.id]) continue;
         seen[it.id] = true;
         out.push(it);
         if (out.length >= cap) return out;

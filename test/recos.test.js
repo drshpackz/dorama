@@ -43,3 +43,14 @@ test('mergeRecommendations tolerates null/empty lists', () => {
   const { mergeRecommendations } = load();
   assert.deepStrictEqual(mergeRecommendations([null, [], [{ id: 9 }]], [], 40).map(x => x.id), [9]);
 });
+
+test('mergeRecommendations skips items with a missing id', () => {
+  const { mergeRecommendations } = load();
+  const merged = mergeRecommendations([[{ id: 1 }, { title: 'no-id' }, { id: 2 }]], [], 40);
+  assert.deepStrictEqual(merged.map(x => x.id), [1, 2]);
+});
+
+test('mergeRecommendations returns empty when cap is 0', () => {
+  const { mergeRecommendations } = load();
+  assert.deepStrictEqual(mergeRecommendations([[{ id: 1 }, { id: 2 }]], [], 0), []);
+});
