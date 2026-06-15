@@ -17,6 +17,19 @@ test('gradeOf maps reactions to signed weights; shit overrides like; like+nice b
   assert.strictEqual(_gradeOf([], false).sign, 'none');
 });
 
+test('gradeOf precedence: shit overrides a positive reaction; multiple positives take the max', () => {
+  const { _gradeOf } = load();
+  assert.strictEqual(_gradeOf(['fire', 'shit'], false).sign, 'strongNeg'); // shit wins over fire
+  assert.strictEqual(_gradeOf(['bore', 'nice'], false).sign, 'mildNeg');   // bore wins over nice
+  assert.deepStrictEqual(_gradeOf(['fire', 'nice', 'think'], false), { sign: 'pos', weight: 2.0 }); // max
+});
+
+test('collectReactions skips malformed keys', () => {
+  const { _collectReactions } = load({ mine_reactions: { 'badkey': ['fire'], 'tv_': ['nice'], 'movie_42': ['fire'] } });
+  const ids = _collectReactions().map(x => x.id);
+  assert.deepStrictEqual(ids, [42]); // 'badkey' (no _) and 'tv_' (NaN id) skipped
+});
+
 test('collectReactions parses mine_reactions into {media,id,types}', () => {
   const { _collectReactions } = load({ mine_reactions: { 'tv_1399': ['fire'], 'movie_27205': ['shit', 'bore'] } });
   const r = _collectReactions();
