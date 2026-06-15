@@ -3,37 +3,37 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { makeMock, loadPlugin } = require('./helpers/lampa-mock');
 
-test('PredictionCard renders the match badge and opens detail on enter', () => {
+// Fake Lampa Card instance whose render() returns a jQuery-like element with .find('.card__view').
+function fakeCard(match, prompt) {
+  var appended = [];
+  var view = {
+    length: 1,
+    append: function (html) { appended.push(html); return view; },
+    find: function (sel) { return { length: sel === '.dorama-match' ? appended.length : 0 }; }
+  };
+  var el = { find: function (sel) { return sel === '.card__view' ? view : { length: 0 }; } };
+  return { data: prompt ? { __prompt: true } : { __match: match }, _appended: appended, render: function () { return el; } };
+}
+
+test('registerMatchBadge injects «%» into personal-row cards, once (idempotent)', () => {
   const mock = makeMock();
   const api = loadPlugin(mock);
-  const card = new api._PredictionCard({ id: 5, media_type: 'tv', vote_average: 8.1, __match: 87, name: 'X', poster_path: '/p.jpg', source: 'tmdb' });
-  card.create();
-  assert.ok(card.render(true)._html.indexOf('Совпадение 87%') >= 0);
-  card.render(true).trigger('hover:enter');
-  const push = mock.calls.activityPush[mock.calls.activityPush.length - 1];
-  assert.strictEqual(push.component, 'full');
-  assert.strictEqual(push.id, 5);
-  assert.strictEqual(push.method, 'tv');
+  api._registerMatchBadge();
+  const card = fakeCard(87);
+  mock.Lampa.Listener.send('line', { type: 'append', data: { personal: true }, items: [card] });
+  assert.strictEqual(card._appended.length, 1);
+  assert.ok(card._appended[0].indexOf('87%') >= 0);
+  mock.Lampa.Listener.send('line', { type: 'visible', data: { personal: true }, items: [card] });
+  assert.strictEqual(card._appended.length, 1, 'idempotent on repeat events');
 });
 
-test('PredictionCard hover:long toggles the native like', () => {
+test('registerMatchBadge ignores non-personal rows and prompt/no-match items', () => {
   const mock = makeMock();
   const api = loadPlugin(mock);
-  const card = new api._PredictionCard({ id: 9, media_type: 'movie', __match: 70, title: 'Y', poster_path: '/p.jpg' });
-  card.create();
-  card.render(true).trigger('hover:long');
-  assert.deepStrictEqual(mock.calls.favToggles[mock.calls.favToggles.length - 1], { where: 'like', id: 9 });
-  assert.ok(mock.calls.noty.length >= 1);
-});
-
-test('PredictionCard prompt mode shows text and does not open detail', () => {
-  const mock = makeMock();
-  const api = loadPlugin(mock);
-  const card = new api._PredictionCard({ __prompt: true, title: 'Лайкните дорамы, чтобы получить персональные рекомендации' });
-  card.create();
-  assert.ok(card.render(true)._html.indexOf('Лайкните дорамы') >= 0);
-  const before = mock.calls.activityPush.length;
-  card.render(true).trigger('hover:enter');
-  assert.strictEqual(mock.calls.activityPush.length, before);
-  assert.ok(mock.calls.noty.length >= 1, 'prompt enter shows a hint Noty');
+  api._registerMatchBadge();
+  const c1 = fakeCard(50), c2 = fakeCard(0, true);
+  mock.Lampa.Listener.send('line', { type: 'append', data: { personal: false }, items: [c1] });
+  mock.Lampa.Listener.send('line', { type: 'append', data: { personal: true }, items: [c2] }); // prompt → no __match
+  assert.strictEqual(c1._appended.length, 0);
+  assert.strictEqual(c2._appended.length, 0);
 });

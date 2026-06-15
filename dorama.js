@@ -219,18 +219,36 @@
 
   var RECS_TITLE = 'Рекомендации для Вас';
   var recsCache = { sig: '', row: null };
-  function setRecsDirty() { recsCache.sig = ''; recsCache.row = null; }
+  function setRecsDirty() { recsCache.sig = ''; recsCache.row = null; dislikeCache.sig = ''; dislikeCache.set = null; }
 
-  function makePredictionCard(elem) { return new PredictionCard(elem); }
+  function recommendationsRow(results, errored, cold) {
+    return { title: RECS_TITLE, personal: true, results: results, source: 'tmdb', __errored: !!errored, __cold: !!cold };
+  }
 
-  // Stamp the verified per-item factory hook so the Line renders PredictionCard.
-  function recommendationsRow(results, errored) {
-    var i;
-    for (i = 0; i < results.length; i++) {
-      results[i].params = results[i].params || {};
-      results[i].params.createInstance = makePredictionCard;
-    }
-    return { title: RECS_TITLE, personal: true, results: results, source: 'tmdb', __errored: !!errored };
+  function positiveSignature(positives) {
+    var s = '', i;
+    for (i = 0; i < positives.length; i++) s += positives[i].id + ':' + positives[i].weight + ',';
+    return s;
+  }
+
+  // Inject a «xx%» badge into each card of a personal row, via the 'line' event.
+  function registerMatchBadge() {
+    if (!Lampa.Listener || !Lampa.Listener.follow) return;
+    Lampa.Listener.follow('line', function (e) {
+      if (!e || (e.type !== 'append' && e.type !== 'visible')) return;
+      if (!e.data || !e.data.personal || !e.items) return;
+      var i, item, el, view, pct;
+      for (i = 0; i < e.items.length; i++) {
+        item = e.items[i];
+        el = (item && item.render) ? item.render() : null;
+        if (!el || !el.find) continue;
+        view = el.find('.card__view');
+        if (!view.length || view.find('.dorama-match').length) continue;
+        pct = item.data && item.data.__match;
+        if (!pct) continue;
+        view.append('<div class="dorama-match" style="position:absolute;left:0.3em;top:0.3em;z-index:2;background:rgba(0,0,0,0.7);color:#7ed957;font-weight:700;padding:0.2em 0.5em;border-radius:1em;pointer-events:none">' + pct + '%</div>');
+      }
+    });
   }
 
   function promptCard() {
@@ -407,66 +425,6 @@
     nextRow();
   }
 
-  // Escape user/TMDB text before injecting into a concatenated HTML string.
-  function escHtml(s) {
-    return String(s == null ? '' : s)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  }
-
-  // Custom card for the «Рекомендации для Вас» row: a «Совпадение xx%» badge plus
-  // self-wired detail (hover:enter) and native like (hover:long). The framework
-  // instantiates it via item.params.createInstance (see recommendationsRow).
-  function PredictionCard(data) {
-    var card = data;
-
-    this.create = function () {
-      var html, self = this;
-      if (card.__prompt) {
-        html = '<div class="card selector card--dorama-prompt"><div class="card__view">' +
-               '<div class="card__promo-text" style="padding:1.2em;text-align:center">' + escHtml(card.title || '') + '</div>' +
-               '</div></div>';
-      } else {
-        var title = card.title || card.name || card.original_title || card.original_name || '';
-        var rating = card.vote_average ? (Math.round(card.vote_average * 10) / 10) : '';
-        var liked = (Lampa.Favorite && Lampa.Favorite.check && Lampa.Favorite.check(card).like) ? ' card--liked' : '';
-        html = '<div class="card selector card--dorama-match' + liked + '"><div class="card__view">' +
-               '<img class="card__img" src="" alt="" />' +
-               '<div class="card__match" style="position:absolute;left:0.5em;top:0.5em;background:rgba(0,0,0,0.75);color:#7ed957;padding:0.2em 0.5em;border-radius:0.4em;font-weight:600">Совпадение ' + (card.__match || 0) + '%</div>' +
-               (rating !== '' ? '<div class="card__vote">' + rating + '</div>' : '') +
-               '</div><div class="card__title">' + escHtml(title) + '</div></div>';
-      }
-      this.card = $(html);
-      this.card.on('hover:enter', function () { self.onEnterCard(); });
-      this.card.on('hover:long', function () { self.onLong(); });
-      if (!card.__prompt) this.image();
-    };
-
-    this.image = function () {
-      if (card.poster_path && Lampa.Api && Lampa.Api.img && this.card && this.card.find) {
-        var img = this.card.find('.card__img');
-        if (img && img.attr) img.attr('src', Lampa.Api.img(card.poster_path, 'w300'));
-      }
-    };
-
-    this.onEnterCard = function () {
-      if (card.__prompt) { if (Lampa.Noty) Lampa.Noty.show('Лайкните дораму (удержание OK), чтобы получить рекомендации'); return; }
-      Lampa.Activity.push({ component: 'full', id: card.id, method: card.media_type || 'movie', card: card, source: card.source || 'tmdb' });
-    };
-
-    this.onLong = function () {
-      if (card.__prompt) return;
-      if (!Lampa.Favorite || !Lampa.Favorite.toggle) return;
-      var added = Lampa.Favorite.toggle('like', card);
-      if (Lampa.Noty) Lampa.Noty.show(added ? 'Добавлено в «Нравится»' : 'Убрано из «Нравится»');
-      if (this.card && this.card.toggleClass) this.card.toggleClass('card--liked', !!added);
-    };
-
-    this.visible = function () { this.image(); };
-    this.use = function () { /* benign: PredictionCard self-wires its events */ };
-    this.render = function (js) { return this.card; };
-    this.destroy = function () { if (this.card && this.card.remove) this.card.remove(); this.card = null; };
-  }
-
   function componentDorama(object) {
     var comp = new Lampa.InteractionMain(object);
     var network = new Lampa.Reguest();
@@ -530,8 +488,12 @@
     window.dorama_plugin_ready = true;
     Lampa.Component.add('dorama', componentDorama);
     addMenuItem();
+    registerMatchBadge();
     if (Lampa.Listener && Lampa.Listener.follow) {
       Lampa.Listener.follow('state:changed', function (e) { if (e && e.target === 'favorite') setRecsDirty(); });
+    }
+    if (Lampa.Storage && Lampa.Storage.listener && Lampa.Storage.listener.follow) {
+      Lampa.Storage.listener.follow('change', function (e) { if (e && e.name === 'mine_reactions') setRecsDirty(); });
     }
   }
 
@@ -556,7 +518,7 @@
       _tmdbUrl: tmdbUrl,
       _start: start,
       _addMenuItem: addMenuItem,
-      _PredictionCard: PredictionCard,
+      _registerMatchBadge: registerMatchBadge,
       _component: componentDorama
     };
   }
