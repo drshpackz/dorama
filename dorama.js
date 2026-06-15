@@ -56,11 +56,6 @@
     return false;
   }
 
-  // TV vs movie for a stored favorite card (mirrors core recomend.js).
-  function seedType(card) {
-    return (card.number_of_seasons || card.first_air_date || card.name) ? 'tv' : 'movie';
-  }
-
   // Weighted genre/language profile. Seeds may be plain cards (weight 1) or
   // {card, weight} objects.
   function buildTasteProfile(seeds) {
