@@ -10,7 +10,7 @@
 1. Откройте Lampa → **Настройки → Расширения** (Settings → Расширения).
 2. Добавьте плагин по ссылке (raw URL):
    ```
-   https://<ваш-логин>.github.io/dorama/dorama.js
+   https://drshpackz.github.io/dorama/dorama.js
    ```
 3. Перезапустите Lampa. В левом меню появится пункт **«Дорама»**.
 
