@@ -41,3 +41,11 @@ test('scoreCandidate ranks genre+language+co-occurrence higher; predictionPercen
   assert.strictEqual(_predictionPercent(0), 55);
   assert.strictEqual(_predictionPercent(9), 99);
 });
+
+test('buildTasteProfile is safe on empty seeds (no genres, no division by zero)', () => {
+  const { _buildTasteProfile } = load();
+  const p = _buildTasteProfile([]);
+  assert.deepStrictEqual(p.genreWeight, {});
+  assert.deepStrictEqual(p.langs, {});
+  assert.strictEqual(p.topLang, '');
+});

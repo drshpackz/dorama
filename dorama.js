@@ -75,7 +75,8 @@
     return false;
   }
 
-  // Liked cards filtered to Asian dramas, most-recent-first, capped at `limit`.
+  // Liked cards filtered to Asian dramas, capped at `limit`. Order is the caller's
+  // (Lampa.Favorite.get({type:'like'}) already returns most-recent-first).
   function collectSeeds(liked, limit) {
     var out = [], i;
     liked = liked || [];
@@ -90,6 +91,8 @@
     return (card.number_of_seasons || card.first_air_date || card.name) ? 'tv' : 'movie';
   }
 
+  // Note: genre ids (numbers) are used as object keys; JS coerces them to strings
+  // consistently on both write (here) and read (scoreCandidate), so lookups match.
   // Normalized genre preference + language distribution across seeds (no API calls).
   function buildTasteProfile(seeds) {
     var genreCount = {}, total = 0, langCount = {}, i, j, gids, g, ln;
