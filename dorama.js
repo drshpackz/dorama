@@ -52,21 +52,26 @@
   }
 
   // Extra catalog: user-requested thematic rows (keyword-narrowed, poster-gated,
-  // rotation off because pools are thin) + a broad all-genre catalog. ko-only.
-  // Thriller(53) is MOVIE-ONLY — never appears in a discover/tv url. History(36)
-  // is movie-only too, so the sageuk row is a movie row.
+  // rotation off) + a broad all-genre catalog. ko-only. Thriller(53) is
+  // MOVIE-ONLY — never appears in a discover/tv url; History(36) and Romance
+  // (10749) are movie-only too, so sageuk is a movie row and TV romance uses the
+  // Drama genre + romance keyword. Pool sizes verified live against TMDB; thin
+  // keyword combos broadened with verified ids: 12565 psychological-thriller,
+  // 295907 psychological-horror, 235847 psychological-terror, 272553
+  // psychological, 326438 twist-ending, 184312 mind-game, 275311 plot-twist,
+  // 10854 time-loop, 9748 revenge, 9840 romance.
   function buildExtraRows() {
     return [
       { title: 'Психологический хоррор (сериалы)', method: 'tv', source: 'tmdb', rotate: false, posterRequired: true,
-        url: 'discover/tv?with_original_language=ko&with_genres=10765|9648|18&with_keywords=12565&sort_by=popularity.desc&vote_count.gte=10' },
+        url: 'discover/tv?with_original_language=ko&with_genres=9648|10765|18&with_keywords=12565|295907|235847|272553&sort_by=popularity.desc&vote_count.gte=5' },
       { title: 'Психологический хоррор (фильмы)', method: 'movie', source: 'tmdb', rotate: false, posterRequired: true,
-        url: 'discover/movie?with_original_language=ko&with_genres=27|53&with_keywords=12565&sort_by=popularity.desc&vote_count.gte=15' },
+        url: 'discover/movie?with_original_language=ko&with_genres=27&sort_by=popularity.desc&vote_count.gte=10' },
       { title: 'Триллер-головоломка (сериалы)', method: 'tv', source: 'tmdb', rotate: false, posterRequired: true,
-        url: 'discover/tv?with_original_language=ko&with_genres=9648|10765&with_keywords=12565&sort_by=popularity.desc&vote_count.gte=10' },
+        url: 'discover/tv?with_original_language=ko&with_genres=9648|10765&with_keywords=12565|326438|184312|275311|10854|9748&sort_by=popularity.desc&vote_count.gte=5' },
       { title: 'Триллер-головоломка: игра со зрителем', method: 'movie', source: 'tmdb', rotate: false, posterRequired: true,
-        url: 'discover/movie?with_original_language=ko&with_genres=53|9648&with_keywords=12565|9748&sort_by=vote_average.desc&vote_count.gte=80' },
+        url: 'discover/movie?with_original_language=ko&with_genres=53|9648&with_keywords=12565|326438|184312|275311|10854|9748&sort_by=popularity.desc&vote_count.gte=10' },
       { title: 'Романтические дорамы', method: 'tv', source: 'tmdb',
-        url: 'discover/tv?with_original_language=ko&with_genres=10749|10766&sort_by=popularity.desc&vote_count.gte=20' },
+        url: 'discover/tv?with_original_language=ko&with_genres=18&with_keywords=9840&sort_by=popularity.desc&vote_count.gte=20' },
       { title: 'Корейские комедии', method: 'tv', source: 'tmdb',
         url: 'discover/tv?with_original_language=ko&with_genres=35&sort_by=popularity.desc&vote_count.gte=20' },
       { title: 'Korean drama: драмы', method: 'tv', source: 'tmdb',
@@ -84,10 +89,23 @@
     ];
   }
 
-  // Full catalog order: popular → newest → 7 curated (unchanged) → extra.
-  // The personal recommendations row is prepended later in loadHead.
+  // Hide BL / gay-themed content (verified TMDB keyword ids): boys' love (bl),
+  // boy's love, lgbt, gay, gay theme, male homosexuality, homosexuality,
+  // same sex relationship. Applied as without_keywords on every discover row.
+  var BL_KEYWORDS = '289844,365317,158718,363345,258533,10180,275157,271167';
+  function appendWithoutKeywords(path) {
+    if (path.indexOf('discover/') !== 0) return path;
+    if (path.indexOf('without_keywords=') >= 0) return path;
+    return path + (path.indexOf('?') >= 0 ? '&' : '?') + 'without_keywords=' + BL_KEYWORDS;
+  }
+
+  // Full catalog order: popular → newest → 7 curated (unchanged) → extra. Every
+  // discover row gets the BL/gay content exclusion (also flows into "more" grids
+  // since onMore reuses row.url). The recommendations row is prepended in loadHead.
   function buildCatalogRows() {
-    return popularRows().concat(buildDynamicRows()).concat(buildRows()).concat(buildExtraRows());
+    var rows = popularRows().concat(buildDynamicRows()).concat(buildRows()).concat(buildExtraRows());
+    var i; for (i = 0; i < rows.length; i++) rows[i].url = appendWithoutKeywords(rows[i].url);
+    return rows;
   }
 
   // Per-open page rotation so the feed isn't identical every time. The same row
@@ -379,6 +397,7 @@
           if (!c.poster_path) continue;
           if (!isAsianDrama(c)) continue;
           if (dislikeRank(dislikeSet, c.id) > 0) continue;
+          if (currentBLBlock[c.id]) continue;             // hide BL/gay content
           if (requireOverlap) {
             ov = false; gg = c.genre_ids || [];
             for (q = 0; q < gg.length; q++) { if (profile.genreWeight[gg[q]]) { ov = true; break; } }
@@ -506,6 +525,31 @@
     for (k = 0; k < ROW_CONCURRENCY && k < n; k++) launchNext();
   }
 
+  // BL/gay content block for the recommendations row: the /recommendations and
+  // /similar endpoints don't accept without_keywords, so collect the ids of the
+  // most popular Korean BL/gay titles via discover and exclude them by id.
+  // Content policy (not user-specific), so cached for the whole session.
+  var BL_BLOCK_PAGES = 2;
+  var blContentCache = { set: null };
+  var currentBLBlock = {};
+  function buildBLBlock(network, done) {
+    if (blContentCache.set) { done(blContentCache.set); return; }
+    var set = {}, tasks = [], p;
+    for (p = 1; p <= BL_BLOCK_PAGES; p++) {
+      tasks.push({ url: 'discover/movie?with_original_language=ko&with_keywords=' + BL_KEYWORDS + '&sort_by=popularity.desc&page=' + p, media: 'movie' });
+      tasks.push({ url: 'discover/tv?with_original_language=ko&with_keywords=' + BL_KEYWORDS + '&sort_by=popularity.desc&page=' + p, media: 'tv' });
+    }
+    var k = 0;
+    function step() {
+      if (k >= tasks.length) { blContentCache.set = set; done(set); return; }
+      fetchResults(network, tasks[k].url, tasks[k].media, function (results) {
+        var j; for (j = 0; j < results.length; j++) if (results[j] && results[j].id != null) set[results[j].id] = true;
+        k++; step();
+      });
+    }
+    step();
+  }
+
   // Assemble the catalog: build the dislike set first, fetch all rows
   // concurrently (de-prioritizing disliked look-alikes), then prepend the
   // personalized row.
@@ -518,7 +562,10 @@
 
     buildDislikeSet(network, signals.negatives, function (dislikeSet) {
       loadRowsConcurrent(network, rows, dislikeSet, seed, note, function (curated) {
-        loadHead(dislikeSet, curated);
+        // BL block is only needed by the recommendations row, so skip it cold.
+        if (signals.positives.length) {
+          buildBLBlock(network, function (block) { currentBLBlock = block; loadHead(dislikeSet, curated); });
+        } else loadHead(dislikeSet, curated);
       });
     });
 

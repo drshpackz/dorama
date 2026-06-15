@@ -81,6 +81,11 @@
   `Storage('dorama_open_seq')`.
 - **Скорость загрузки** — `ROW_CONCURRENCY` (по умолчанию 4) — сколько рядов
   грузится параллельно; при ошибках 429 от прокси TMDB снизьте до 3.
+- **Скрытие контента (BL / gay)** — все ряды каталога идут с
+  `without_keywords=<BL_KEYWORDS>` (boys' love, lgbt, gay, homosexuality и т.п.),
+  а лента рекомендаций дополнительно исключает такие тайтлы по id (`buildBLBlock`,
+  т.к. `/recommendations` не принимает `without_keywords`). Чтобы изменить набор —
+  правьте константу `BL_KEYWORDS` в `dorama.js` (id ключевых слов TMDB).
 - **Настроить рекомендации** — берётся до 8 последних позитивных сигналов
   (`collectSignals().positives.slice(0, 8)`); веса в `scoreCandidate`
   (совпадение между лайками / жанр / язык / рейтинг) и формула `predictionPercent`
