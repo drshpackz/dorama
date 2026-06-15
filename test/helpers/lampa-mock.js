@@ -17,7 +17,7 @@ function makeEl(html) {
 // --- mock factory: returns { Lampa, $, window, calls } ---
 function makeMock(options) {
   options = options || {};
-  var calls = { activityPush: [], componentAdd: {}, listeners: {}, requests: [], clears: 0 };
+  var calls = { activityPush: [], componentAdd: {}, listeners: {}, requests: [], clears: 0, empties: [], loaderCalls: [], toggles: 0 };
 
   var menuList = makeEl('');               // the .menu .menu__list element
   function $(arg) {
@@ -39,21 +39,33 @@ function makeMock(options) {
   var responder = options.responder || defaultResponder;
 
   function Reguest() {
-    this.silent = function (url, ok /*, err */) {
+    this.timeout = function () {};
+    this.silent = function (url, ok, err) {
       calls.requests.push(url);
       var json = responder(url);
+      // Simulate a real HTTP/network error when the responder asks for one:
+      // real Lampa.Reguest passes the augmented jqXHR to the error callback.
+      if (json && json.__error) {
+        if (err) err({ status: json.__error, decode_code: json.__error, decode_error: 'auth failed' });
+        return;
+      }
       ok(json);
     };
     this.clear = function () { calls.clears++; };
   }
 
-  // Mock InteractionMain: records build()/empty()/destroy()
+  // Mock InteractionMain: records build()/empty()/destroy(), loader/toggle, and
+  // exposes an appendable root via render() (for the error/empty Lampa.Empty path).
   function InteractionMain(object) {
     this.object = object;
-    this.activity = { loader: function () {}, toggle: function () {} };
+    var rootEl = makeEl('<div class="dorama-root"></div>');
+    this.activity = {
+      loader: function (v) { calls.loaderCalls.push(v); },
+      toggle: function () { calls.toggles++; }
+    };
     this.build = function (data) { this._built = data; };
     this.empty = function () { this._empty = true; };
-    this.render = function () { return {}; };
+    this.render = function () { return rootEl; };
     this.destroy = function () { this._destroyed = true; };
   }
 
@@ -64,9 +76,21 @@ function makeMock(options) {
     Component: { add: function (name, fn) { calls.componentAdd[name] = fn; } },
     InteractionMain: InteractionMain,
     Reguest: Reguest,
-    TMDB: { api: function (url) { return 'https://api.themoviedb.org/3/' + url + (url.indexOf('?') >= 0 ? '&' : '?') + 'api_key=K&language=ru'; } },
+    // Real Lampa: api() only builds the host (+ proxy_tmdb); it does NOT append
+    // api_key. key() is a function returning the public TMDB key.
+    TMDB: {
+      api: function (url) { return 'https://api.themoviedb.org/3/' + url; },
+      key: function () { return 'TESTKEY'; }
+    },
     Arrays: { shuffle: function (a) { return a; }, destroy: function () {} },
-    Storage: { field: function () { return 'ru'; }, get: function (k, def) { return def; }, set: function () {} }
+    Storage: { field: function () { return 'ru'; }, get: function (k, def) { return def; }, set: function () {} },
+    // Records constructed empties so tests can assert the error/empty descr.
+    Empty: function (params) {
+      calls.empties.push(params || {});
+      this.render = function () { return makeEl('<div class="empty">' + ((params && params.descr) || '') + '</div>'); };
+      this.start = function () { calls.emptyStart = (calls.emptyStart || 0) + 1; };
+    },
+    Controller: { add: function () {}, toggle: function () {}, collectionSet: function () {}, collectionFocus: function () {} }
   };
 
   return { Lampa: Lampa, $: $, calls: calls, menuList: menuList };

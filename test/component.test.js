@@ -32,13 +32,14 @@ test('component.onMore pushes a category_full grid for the row', () => {
   });
 });
 
-test('component.create calls empty() when every request returns no results', () => {
+test('component.create shows an empty state (not error) when every request returns no results', () => {
   const mock = makeMock({ responder: function () { return { results: [] }; } });
   const api = loadPlugin(mock);
   const comp = api._component({});
   comp.create();
   assert.strictEqual(comp._built, undefined);
-  assert.strictEqual(comp._empty, true);
+  assert.strictEqual(mock.calls.empties.length, 1);
+  assert.ok(mock.calls.toggles >= 1, 'activity resolved (no infinite spinner)');
 });
 
 test('component.destroy clears the network request', () => {

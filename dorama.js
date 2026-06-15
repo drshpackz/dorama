@@ -85,30 +85,58 @@
     $('.menu .menu__list').eq(0).append(item);
   }
 
-  // GET a TMDB path via Lampa, stamp media_type onto each result, return results
-  // (+ total_pages) through `done`. Network errors degrade to an empty list.
+  // Build an authenticated TMDB URL. Lampa.TMDB.api() only prepends the host
+  // (and applies the proxy_tmdb setting) — it does NOT add api_key. So we append
+  // api_key (Lampa.TMDB.key()) + language ourselves, exactly like Lampa's own
+  // tmdb source, then api() wraps it with the correct host.
+  function tmdbUrl(path) {
+    var u = path;
+    if (u.indexOf('api_key=') === -1 && Lampa.TMDB && Lampa.TMDB.key) {
+      u += (u.indexOf('?') >= 0 ? '&' : '?') + 'api_key=' + Lampa.TMDB.key();
+    }
+    if (u.indexOf('language=') === -1) {
+      var lang = (Lampa.Storage && Lampa.Storage.field && Lampa.Storage.field('tmdb_lang')) || 'ru';
+      u += (u.indexOf('?') >= 0 ? '&' : '?') + 'language=' + lang;
+    }
+    return Lampa.TMDB.api(u);
+  }
+
+  // GET a TMDB path via Lampa. done(results, total_pages, errorStatus): errorStatus
+  // is null on success (even with empty results), or the HTTP status (e.g. 401) on a
+  // network/HTTP error — so callers can tell "failed" from "genuinely empty".
   function fetchResults(network, path, mediaType, done) {
-    network.silent(Lampa.TMDB.api(path), function (json) {
+    network.silent(tmdbUrl(path), function (json) {
       var res = (json && json.results) ? json.results : [];
       var i;
       if (mediaType) for (i = 0; i < res.length; i++) {
         if (res[i] && !res[i].media_type) res[i].media_type = mediaType;
       }
-      done(res, (json && json.total_pages) || 1);
-    }, function () { done([], 1); });
+      done(res, (json && json.total_pages) || 1, null);
+    }, function (xhr) {
+      var status = (xhr && (xhr.status || xhr.decode_code)) || 0;
+      done([], 1, status || -1); // truthy errorStatus marks a hard failure
+    });
   }
 
   // Assemble the whole catalog: recommendation row first, then curated rows.
   // Sequential requests keep one Reguest instance safe on old WebViews.
-  function loadCatalog(network, onDone, onEmpty) {
+  // onFail({errored, status}) fires only when NO row produced content.
+  function loadCatalog(network, onDone, onFail) {
     var rows = buildRows();
     var curated = [];
     var i = 0;
+    var errors = 0;
+    var lastStatus = 0;
+
+    function note(errStatus) {
+      if (errStatus) { errors++; if (typeof errStatus === 'number' && errStatus > 0) lastStatus = errStatus; }
+    }
 
     function nextRow() {
       if (i >= rows.length) { loadRecos(); return; }
       var row = rows[i];
-      fetchResults(network, row.url, row.method, function (results, totalPages) {
+      fetchResults(network, row.url, row.method, function (results, totalPages, err) {
+        note(err);
         if (results.length) curated.push({
           title: row.title, results: results, url: row.url,
           method: row.method, source: 'tmdb', total_pages: totalPages
@@ -127,8 +155,8 @@
       function nextAnchor() {
         if (k >= picked.length) { finish(); return; }
         var a = picked[k];
-        fetchResults(network, a.type + '/' + a.id + '/recommendations', a.type, function (results) {
-          lists.push(results); k++; nextAnchor();
+        fetchResults(network, a.type + '/' + a.id + '/recommendations', a.type, function (results, totalPages, err) {
+          note(err); lists.push(results); k++; nextAnchor();
         });
       }
       function finish() {
@@ -136,7 +164,8 @@
         var out = [];
         if (merged.length) out.push({ title: 'В духе «Паразитов»', results: merged, source: 'tmdb' });
         var allRows = out.concat(curated);
-        if (allRows.length) onDone(allRows); else onEmpty();
+        if (allRows.length) onDone(allRows);
+        else onFail({ errored: errors > 0, status: lastStatus });
       }
       nextAnchor();
     }
@@ -147,6 +176,7 @@
   function componentDorama(object) {
     var comp = new Lampa.InteractionMain(object);
     var network = new Lampa.Reguest();
+    if (network.timeout) network.timeout(1000 * 15);
 
     comp.create = function () {
       var self = this;
@@ -155,11 +185,30 @@
         self.build(data);
         self.activity.loader(false);
         self.activity.toggle();
-      }, function () {
-        self.activity.loader(false);
-        self.empty();
+      }, function (info) {
+        self.showState(info);
       });
       return this.render();
+    };
+
+    // Show a visible end-state and ALWAYS resolve the activity, so a failed load can
+    // never look like an endless spinner. Lampa has no this.empty(msg), so we render
+    // Lampa.Empty manually (mirrors core feed.js): append it, rebind start, then
+    // loader(false) + toggle.
+    comp.showState = function (info) {
+      var descr;
+      if (info && info.errored) {
+        descr = info.status === 401
+          ? 'TMDB: ошибка авторизации (401). Проверьте ключ/прокси TMDB в настройках Lampa.'
+          : 'TMDB: не удалось загрузить данные' + (info.status ? ' (' + info.status + ')' : '');
+      } else {
+        descr = 'Ничего не найдено';
+      }
+      var empty = new Lampa.Empty({ descr: descr });
+      this.render().append(empty.render(true));
+      this.start = empty.start.bind(empty);
+      this.activity.loader(false);
+      this.activity.toggle();
     };
 
     // Row "more" → open that row's full infinite-scroll grid (FR3 shape).
@@ -199,6 +248,7 @@
       ANCHORS: ANCHORS,
       pickAnchors: pickAnchors,
       mergeRecommendations: mergeRecommendations,
+      _tmdbUrl: tmdbUrl,
       _start: start,
       _addMenuItem: addMenuItem,
       _component: componentDorama
