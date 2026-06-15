@@ -39,3 +39,24 @@ test('collectReactions parses mine_reactions into {media,id,types}', () => {
   assert.strictEqual(byId[27205].media, 'movie');
   assert.deepStrictEqual(byId[27205].types, ['shit', 'bore']);
 });
+
+test('collectSignals splits positives/negatives, merges like+reaction, caps, Asian-filters', () => {
+  const { _collectSignals } = load({
+    favorites: { like: [
+      { id: 1399, name: 'KDrama', original_language: 'ko', genre_ids: [18] },   // liked TV (also reacted fire below)
+      { id: 500, title: 'EnMovie', original_language: 'en', genre_ids: [35] }    // liked but NOT Asian → dropped from positives
+    ], history: [], viewed: [] },
+    mine_reactions: { 'tv_1399': ['fire'], 'movie_27205': ['shit'], 'tv_2000': ['bore'] }
+  });
+  const s = _collectSignals();
+  const pos = {}; s.positives.forEach(p => { pos[p.id] = p; });
+  assert.ok(pos[1399], 'liked + fire kept');
+  assert.strictEqual(pos[1399].weight, 2.5, 'fire(2.0)+like bonus → 2.5');
+  assert.ok(!pos[500], 'non-Asian liked dropped from positives');
+  const negIds = s.negatives.map(n => n.id);
+  assert.ok(negIds.indexOf(27205) >= 0, 'shit is negative');
+  assert.ok(negIds.indexOf(2000) >= 0, 'bore is negative');
+  assert.strictEqual(s.negatives.filter(n => n.id === 27205)[0].strong, true);
+  assert.strictEqual(s.negatives.filter(n => n.id === 2000)[0].strong, false);
+  assert.ok(s.ratedIds[1399] && s.ratedIds[27205] && s.ratedIds[2000] && s.ratedIds[500]);
+});

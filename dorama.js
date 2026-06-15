@@ -144,6 +144,34 @@
     return out;
   }
 
+  // Merge likes + reactions → positive seeds (with weight + card if liked),
+  // negative seeds, and the set of all rated ids.
+  function collectSignals() {
+    var liked = favGet('like');
+    var reactions = collectReactions();
+    var map = {}, i, r, c, key, e, g;
+    for (i = 0; i < reactions.length; i++) {
+      r = reactions[i]; key = r.media + '_' + r.id;
+      map[key] = { id: r.id, media: r.media, types: (r.types || []).slice(), liked: false, card: null };
+    }
+    for (i = 0; i < liked.length; i++) {
+      c = liked[i]; key = (c.name ? 'tv' : 'movie') + '_' + c.id;
+      if (!map[key]) map[key] = { id: c.id, media: (c.name ? 'tv' : 'movie'), types: [], liked: false, card: null };
+      map[key].liked = true; map[key].card = c;
+    }
+    var positives = [], negatives = [], ratedIds = {};
+    for (key in map) {
+      if (!map.hasOwnProperty(key)) continue;
+      e = map[key]; ratedIds[e.id] = true;
+      g = gradeOf(e.types, e.liked);
+      if (g.sign === 'pos') { if (!e.card || isAsianDrama(e.card)) positives.push({ id: e.id, media: e.media, weight: g.weight, card: e.card }); }
+      else if (g.sign === 'strongNeg') negatives.push({ id: e.id, media: e.media, strong: true });
+      else if (g.sign === 'mildNeg') negatives.push({ id: e.id, media: e.media, strong: false });
+    }
+    positives.sort(function (a, b) { return b.weight - a.weight; });
+    return { positives: positives.slice(0, 8), negatives: negatives.slice(0, 6), ratedIds: ratedIds };
+  }
+
   var RECS_TITLE = 'Рекомендации для Вас';
   var recsCache = { sig: '', row: null };
   function setRecsDirty() { recsCache.sig = ''; recsCache.row = null; }
@@ -476,6 +504,7 @@
       _predictionPercent: predictionPercent,
       _gradeOf: gradeOf,
       _collectReactions: collectReactions,
+      _collectSignals: collectSignals,
       _loadRecommendations: loadRecommendations,
       _tmdbUrl: tmdbUrl,
       _start: start,
