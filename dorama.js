@@ -108,6 +108,42 @@
     return Math.round(55 + 44 * r);
   }
 
+  // --- graded signals: native likes + 5-level reactions (mine_reactions) ---
+  var REACTION_WEIGHT = { fire: 2.0, nice: 1.0, think: 0.5 };
+
+  function hasType(types, t) { return !!types && types.indexOf(t) >= 0; }
+
+  // Signed grade for a title from its reaction types + liked flag.
+  function gradeOf(types, liked) {
+    types = types || [];
+    if (hasType(types, 'shit')) return { sign: 'strongNeg', weight: -2 };
+    if (hasType(types, 'bore')) return { sign: 'mildNeg', weight: -1 };
+    var w = 0;
+    if (hasType(types, 'fire')) w = Math.max(w, REACTION_WEIGHT.fire);
+    if (hasType(types, 'nice')) w = Math.max(w, REACTION_WEIGHT.nice);
+    if (hasType(types, 'think')) w = Math.max(w, REACTION_WEIGHT.think);
+    if (liked) w = Math.max(w, 1.0);
+    if (w <= 0) return { sign: 'none', weight: 0 };
+    var posReaction = hasType(types, 'fire') || hasType(types, 'nice') || hasType(types, 'think');
+    if (liked && posReaction) w = Math.min(w + 0.5, 2.5);
+    return { sign: 'pos', weight: w };
+  }
+
+  // The user's own reactions from local Storage 'mine_reactions':
+  // { '<media>_<tmdbId>': ['fire'|'nice'|'think'|'bore'|'shit', ...] }.
+  function collectReactions() {
+    var mine = (Lampa.Storage && Lampa.Storage.get) ? (Lampa.Storage.get('mine_reactions', {}) || {}) : {};
+    var out = [], k, us, media, id;
+    for (k in mine) {
+      if (!mine.hasOwnProperty(k)) continue;
+      us = k.indexOf('_'); if (us < 0) continue;
+      media = k.slice(0, us); id = parseInt(k.slice(us + 1), 10);
+      if (!id) continue;
+      out.push({ media: media, id: id, types: mine[k] || [] });
+    }
+    return out;
+  }
+
   var RECS_TITLE = 'Рекомендации для Вас';
   var recsCache = { sig: '', row: null };
   function setRecsDirty() { recsCache.sig = ''; recsCache.row = null; }
@@ -438,6 +474,8 @@
       _buildTasteProfile: buildTasteProfile,
       _scoreCandidate: scoreCandidate,
       _predictionPercent: predictionPercent,
+      _gradeOf: gradeOf,
+      _collectReactions: collectReactions,
       _loadRecommendations: loadRecommendations,
       _tmdbUrl: tmdbUrl,
       _start: start,
