@@ -72,15 +72,16 @@
     return (card.number_of_seasons || card.first_air_date || card.name) ? 'tv' : 'movie';
   }
 
-  // Note: genre ids (numbers) are used as object keys; JS coerces them to strings
-  // consistently on both write (here) and read (scoreCandidate), so lookups match.
-  // Normalized genre preference + language distribution across seeds (no API calls).
+  // Weighted genre/language profile. Seeds may be plain cards (weight 1) or
+  // {card, weight} objects.
   function buildTasteProfile(seeds) {
-    var genreCount = {}, total = 0, langCount = {}, i, j, gids, g, ln;
+    var genreCount = {}, total = 0, langCount = {}, i, j, gids, g, ln, w, card;
     for (i = 0; i < seeds.length; i++) {
-      gids = seeds[i].genre_ids || [];
-      for (j = 0; j < gids.length; j++) { g = gids[j]; genreCount[g] = (genreCount[g] || 0) + 1; total++; }
-      ln = seeds[i].original_language; if (ln) langCount[ln] = (langCount[ln] || 0) + 1;
+      card = seeds[i].card || seeds[i]; w = seeds[i].weight || seeds[i].__weight || 1;
+      if (!card) continue;
+      gids = card.genre_ids || [];
+      for (j = 0; j < gids.length; j++) { g = gids[j]; genreCount[g] = (genreCount[g] || 0) + w; total += w; }
+      ln = card.original_language; if (ln) langCount[ln] = (langCount[ln] || 0) + w;
     }
     var genreWeight = {}, langs = {}, topLang = '', topN = -1, l;
     for (g in genreCount) { if (genreCount.hasOwnProperty(g)) genreWeight[g] = total ? genreCount[g] / total : 0; }
@@ -88,9 +89,9 @@
     return { genreWeight: genreWeight, langs: langs, topLang: topLang };
   }
 
-  // Weighted content+collaborative score for one candidate.
-  function scoreCandidate(c, profile, coCount) {
-    var co = Math.min(coCount || 0, 3) / 3;
+  // Weighted content+collaborative score. `coScore` = sum of seed weights that surfaced this candidate.
+  function scoreCandidate(c, profile, coScore) {
+    var co = Math.min(coScore || 0, 6) / 6;
     var gids = c.genre_ids || [], over = 0, i;
     for (i = 0; i < gids.length; i++) { over += profile.genreWeight[gids[i]] || 0; }
     if (over > 1) over = 1;

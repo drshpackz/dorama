@@ -127,3 +127,18 @@ test('loadRecommendations falls back to /similar when the recommendations pool i
   assert.match(mock.calls.requests.join('\n'), /\/similar/, 'similar fetched when pool < MIN_POOL');
   assert.ok(row.results.map(c => c.id).indexOf(202) >= 0, 'similar candidate included');
 });
+
+test('scoreCandidate weights co-occurrence by seed weight (fire seed beats think seed)', () => {
+  const { _scoreCandidate, _buildTasteProfile } = load();
+  const profile = _buildTasteProfile([{ card: { genre_ids: [18], original_language: 'ko' }, weight: 2 }]);
+  const fromFire = _scoreCandidate({ genre_ids: [18], original_language: 'ko', vote_average: 7, vote_count: 100 }, profile, 2.0);
+  const fromThink = _scoreCandidate({ genre_ids: [18], original_language: 'ko', vote_average: 7, vote_count: 100 }, profile, 0.5);
+  assert.ok(fromFire > fromThink, 'higher weighted co-occurrence scores higher');
+});
+
+test('buildTasteProfile accepts weighted {card,weight} seeds', () => {
+  const { _buildTasteProfile } = load();
+  const p = _buildTasteProfile([{ card: { genre_ids: [18, 80], original_language: 'ko' }, weight: 2 }]);
+  assert.ok(p.genreWeight[18] > 0 && p.genreWeight[80] > 0);
+  assert.strictEqual(p.topLang, 'ko');
+});
