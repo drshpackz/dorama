@@ -60,3 +60,12 @@ test('collectSignals splits positives/negatives, merges like+reaction, caps, Asi
   assert.strictEqual(s.negatives.filter(n => n.id === 2000)[0].strong, false);
   assert.ok(s.ratedIds[1399] && s.ratedIds[27205] && s.ratedIds[2000] && s.ratedIds[500]);
 });
+
+test('collectSignals keeps a reaction-only positive (no card → Asian filter skipped)', () => {
+  const { _collectSignals } = load({ mine_reactions: { 'movie_777': ['fire'] } });
+  const s = _collectSignals();
+  const seed = s.positives.filter(p => p.id === 777)[0];
+  assert.ok(seed, 'reaction-only 🔥 title included as a positive seed');
+  assert.strictEqual(seed.weight, 2.0);
+  assert.strictEqual(seed.card, null);
+});
