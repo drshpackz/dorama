@@ -44,6 +44,38 @@ test('Asian candidate with no genre overlap is dropped', () => {
   assert.ok(ids.indexOf(888) < 0, 'zero-overlap candidate dropped');
 });
 
+test('recommendations survive when seeds are reaction-only (no genre profile)', () => {
+  const mock = makeMock({
+    mine_reactions: { 'tv_100': ['fire'] }, // reaction, not a native like → seed has no genre_ids
+    responder: function (url) {
+      if (url.indexOf('/recommendations') >= 0 || url.indexOf('/similar') >= 0)
+        return { results: [{ id: 201, original_language: 'ko', genre_ids: [18], vote_average: 8, vote_count: 200, poster_path: '/a.jpg' }] };
+      return { results: [] };
+    }
+  });
+  const api = loadPlugin(mock);
+  let row;
+  api._loadRecommendations(new mock.Lampa.Reguest(), null, function (r) { row = r; });
+  assert.ok(row.results.length >= 1, 'reaction-only seeds still yield a recommendations row');
+  assert.strictEqual(row.results[0].id, 201);
+});
+
+test('recommendations fall back to Asian-only when nothing overlaps the genre profile', () => {
+  const mock = makeMock({
+    favorites: { like: [{ id: 100, original_language: 'ko', genre_ids: [18], first_air_date: '2020-01-01' }], history: [], viewed: [] },
+    responder: function (url) {
+      if (url.indexOf('/recommendations') >= 0 || url.indexOf('/similar') >= 0)
+        return { results: [{ id: 201, original_language: 'ko', genre_ids: [10749], vote_average: 8, vote_count: 200, poster_path: '/a.jpg' }] }; // no genre overlap with [18]
+      return { results: [] };
+    }
+  });
+  const api = loadPlugin(mock);
+  let row;
+  api._loadRecommendations(new mock.Lampa.Reguest(), null, function (r) { row = r; });
+  assert.ok(row.results.length >= 1, 'row not empty even when no candidate overlaps the profile');
+  assert.strictEqual(row.results[0].id, 201);
+});
+
 test('co-occurrence + genre overlap outweigh raw rating', () => {
   const { _scoreCandidate, _buildTasteProfile } = loadPlugin(makeMock());
   const profile = _buildTasteProfile([{ genre_ids: [18, 80], original_language: 'ko' }]);

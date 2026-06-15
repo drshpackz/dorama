@@ -366,19 +366,32 @@
     });
     function finish() {
       var pool = mergeRecommendations(lists, exclude, 1000);
-      var scored = [], i, c, sc;
-      for (i = 0; i < pool.length; i++) {
-        c = pool[i];
-        if (!c.poster_path) continue;
-        if (!isAsianDrama(c)) continue;                 // strict: drop non-Asian junk
-        if (dislikeRank(dislikeSet, c.id) > 0) continue;
-        var ov = false, gg = c.genre_ids || [], q;       // strict: require genre overlap
-        for (q = 0; q < gg.length; q++) { if (profile.genreWeight[gg[q]]) { ov = true; break; } }
-        if (!ov) continue;
-        sc = scoreCandidate(c, profile, coScore[c.id]);
-        c.__score = sc; c.__match = predictionPercent(sc);
-        scored.push(c);
+      var hasGenreProfile = false, gk;
+      for (gk in profile.genreWeight) { if (profile.genreWeight.hasOwnProperty(gk)) { hasGenreProfile = true; break; } }
+      // Always Asian-only + not-disliked + poster. Genre overlap is required only
+      // when we actually have a genre profile (native likes carry genre_ids;
+      // reaction-only seeds may not). If the strict pass yields nothing, relax the
+      // genre requirement so the row never silently vanishes for an active user.
+      function collect(requireOverlap) {
+        var out = [], i, c, sc, ov, gg, q;
+        for (i = 0; i < pool.length; i++) {
+          c = pool[i];
+          if (!c.poster_path) continue;
+          if (!isAsianDrama(c)) continue;
+          if (dislikeRank(dislikeSet, c.id) > 0) continue;
+          if (requireOverlap) {
+            ov = false; gg = c.genre_ids || [];
+            for (q = 0; q < gg.length; q++) { if (profile.genreWeight[gg[q]]) { ov = true; break; } }
+            if (!ov) continue;
+          }
+          sc = scoreCandidate(c, profile, coScore[c.id]);
+          c.__score = sc; c.__match = predictionPercent(sc);
+          out.push(c);
+        }
+        return out;
       }
+      var scored = collect(hasGenreProfile);
+      if (!scored.length) scored = collect(false);
       scored.sort(function (a, b) { return b.__score - a.__score; });
       var top = scored.slice(0, 20);
       if (!top.length) { emit(recommendationsRow([], errors > 0, false)); return; }
