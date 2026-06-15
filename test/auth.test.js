@@ -28,7 +28,7 @@ test('the URL builder is exported and adds api_key + language', () => {
 
 // Error visibility: a total auth failure must NOT look like a silent hang.
 test('all requests failing (401) shows a visible auth error and resolves the activity', () => {
-  const mock = makeMock({ responder: function () { return { __error: 401 }; } });
+  const mock = makeMock({ favorites: { like: [{ id: 100, original_language: 'ko', genre_ids: [18], first_air_date: '2020-01-01' }] }, responder: function () { return { __error: 401 }; } });
   const api = loadPlugin(mock);
   const comp = api._component({});
   comp.create();
@@ -41,7 +41,7 @@ test('all requests failing (401) shows a visible auth error and resolves the act
 
 // Genuinely empty (HTTP 200, no data) is a different state from an error.
 test('genuinely empty results show "nothing found", not an auth error', () => {
-  const mock = makeMock({ responder: function () { return { results: [] }; } });
+  const mock = makeMock({ favorites: { like: [{ id: 100, original_language: 'ko', genre_ids: [18], first_air_date: '2020-01-01' }] }, responder: function () { return { results: [] }; } });
   const api = loadPlugin(mock);
   const comp = api._component({});
   comp.create();
@@ -66,5 +66,5 @@ test('partial failure still shows content when some rows load', () => {
   const comp = api._component({});
   comp.create();
   assert.ok(Array.isArray(comp._built), 'content built despite discover failures');
-  assert.strictEqual(comp._built[0].title, 'В духе «Паразитов»');
+  assert.strictEqual(comp._built[0].title, 'Рекомендации для Вас');
 });

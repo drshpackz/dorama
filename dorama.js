@@ -23,26 +23,6 @@
     ];
   }
 
-  // 20 verified anchor titles (spec v2 §4). type routes to the correct
-  // TMDB recommendations endpoint (movie/{id} vs tv/{id}).
-  var ANCHORS = [
-    { id: 496243, type: 'movie' }, { id: 1269208, type: 'movie' }, { id: 740441, type: 'movie' },
-    { id: 729854, type: 'movie' }, { id: 396535, type: 'movie' }, { id: 670, type: 'movie' },
-    { id: 11423, type: 'movie' }, { id: 491584, type: 'movie' }, { id: 110415, type: 'movie' },
-    { id: 575604, type: 'movie' },
-    { id: 93405, type: 'tv' }, { id: 89959, type: 'tv' }, { id: 106651, type: 'tv' },
-    { id: 99489, type: 'tv' }, { id: 96648, type: 'tv' }, { id: 135340, type: 'tv' },
-    { id: 84327, type: 'tv' }, { id: 99494, type: 'tv' }, { id: 119769, type: 'tv' },
-    { id: 156484, type: 'tv' }
-  ];
-
-  // Pick `count` anchors starting at `offset`, wrapping around the pool.
-  function pickAnchors(all, count, offset) {
-    var out = [], n = all.length, i;
-    for (i = 0; i < count && i < n; i++) out.push(all[(offset + i) % n]);
-    return out;
-  }
-
   // Merge recommendation result arrays: dedupe by id, drop the seed anchors,
   // cap at `cap` items. Tolerates null/empty lists.
   function mergeRecommendations(lists, anchorIds, cap) {
@@ -271,56 +251,31 @@
     });
   }
 
-  // Assemble the whole catalog: recommendation row first, then curated rows.
-  // Sequential requests keep one Reguest instance safe on old WebViews.
-  // onFail({errored, status}) fires only when NO row produced content.
+  // Assemble the catalog: personalized recommendations row first, then curated.
   function loadCatalog(network, onDone, onFail) {
     var rows = buildRows();
     var curated = [];
-    var i = 0;
-    var errors = 0;
-    var lastStatus = 0;
+    var i = 0, errors = 0, lastStatus = 0;
 
-    function note(errStatus) {
-      if (errStatus) { errors++; if (typeof errStatus === 'number' && errStatus > 0) lastStatus = errStatus; }
-    }
+    function note(errStatus) { if (errStatus) { errors++; if (typeof errStatus === 'number' && errStatus > 0) lastStatus = errStatus; } }
 
     function nextRow() {
-      if (i >= rows.length) { loadRecos(); return; }
+      if (i >= rows.length) { loadHead(); return; }
       var row = rows[i];
       fetchResults(network, row.url, row.method, function (results, totalPages, err) {
         note(err);
-        if (results.length) curated.push({
-          title: row.title, results: results, url: row.url,
-          method: row.method, source: 'tmdb', total_pages: totalPages
-        });
+        if (results.length) curated.push({ title: row.title, results: results, url: row.url, method: row.method, source: 'tmdb', total_pages: totalPages });
         i++; nextRow();
       });
     }
 
-    function loadRecos() {
-      var offset = Math.floor((window.dorama_reco_offset || 0)) % ANCHORS.length;
-      window.dorama_reco_offset = (offset + 7) % ANCHORS.length; // step 7 is coprime with 20 -> seed mix varies widely across opens (clamped)
-      var picked = pickAnchors(ANCHORS, 5, offset);
-      var anchorIds = [], lists = [], k = 0, p;
-      for (p = 0; p < picked.length; p++) anchorIds.push(picked[p].id);
-
-      function nextAnchor() {
-        if (k >= picked.length) { finish(); return; }
-        var a = picked[k];
-        fetchResults(network, a.type + '/' + a.id + '/recommendations', a.type, function (results, totalPages, err) {
-          note(err); lists.push(results); k++; nextAnchor();
-        });
-      }
-      function finish() {
-        var merged = mergeRecommendations(lists, anchorIds, 40);
-        var out = [];
-        if (merged.length) out.push({ title: 'В духе «Паразитов»', results: merged, source: 'tmdb' });
-        var allRows = out.concat(curated);
+    function loadHead() {
+      loadRecommendations(network, function (recRow) {
+        var head = (recRow && recRow.results && recRow.results.length) ? [recRow] : [];
+        var allRows = head.concat(curated);
         if (allRows.length) onDone(allRows);
-        else onFail({ errored: errors > 0, status: lastStatus });
-      }
-      nextAnchor();
+        else onFail({ errored: errors > 0 || (recRow && recRow.__errored), status: lastStatus });
+      });
     }
 
     nextRow();
@@ -449,6 +404,9 @@
     window.dorama_plugin_ready = true;
     Lampa.Component.add('dorama', componentDorama);
     addMenuItem();
+    if (Lampa.Listener && Lampa.Listener.follow) {
+      Lampa.Listener.follow('state:changed', function (e) { if (e && e.target === 'favorite') setRecsDirty(); });
+    }
   }
 
   if (window.appready) start();
@@ -458,8 +416,6 @@
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
       buildRows: buildRows,
-      ANCHORS: ANCHORS,
-      pickAnchors: pickAnchors,
       mergeRecommendations: mergeRecommendations,
       _collectSeeds: collectSeeds,
       _buildTasteProfile: buildTasteProfile,
