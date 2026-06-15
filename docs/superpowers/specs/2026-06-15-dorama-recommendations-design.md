@@ -133,14 +133,34 @@ pattern), so it isn't subject to a fragile native-card contract:
   `Lampa.Noty`.
 - `render(js)` / `destroy()`.
 
-### Integration
-The recommendations row carries `cardClass: PredictionCard`. **Risk:** whether
-`InteractionMain`/`InteractionLine` honors a per-row `cardClass` must be verified
-against the real source in the plan. **Contingency:** if not honored, render the
-recommendations row as a manually-built `Lampa.InteractionLine` (or
-`Lampa.Scroll` of `PredictionCard`s) prepended above the `InteractionMain`
-content, with its own controller — fully version-robust. The plan resolves this
-before implementing the card.
+### Integration (verified against real Lampa source)
+A per-row `cardClass` field is **not** read by the framework (it only works
+inside nc.js's own patched source). The real factory hook is
+`item.params.createInstance` on **each result item**. Before `this.build(rows)`,
+stamp every result of the recommendations row:
+```js
+row.results.forEach(function (item) {
+  item.params = item.params || {};
+  item.params.createInstance = function (elem) { return new PredictionCard(elem); };
+});
+```
+`Utils.createInstance` reads exactly this:
+`typeof element.params.createInstance == 'function' ? element.params.createInstance(element) : new Card(element)`.
+Rows without it fall through to the standard card unchanged. The Line calls, in
+order: `card.create()`, `card.render(true)` (must return the **jQuery** card
+element — the Line calls `.on(...)` on it), and `card.destroy()` on teardown;
+lazy images load on a `visible` event. `PredictionCard` therefore: builds
+`this.card` as a jQuery element, **self-wires** `hover:enter` → detail and
+`hover:long` → `Lampa.Favorite.toggle('like', data)` (custom cards don't get the
+native Menu module), renders its own heart from `Favorite.check`, and exposes a
+benign `use()` no-op so the framework's `card.use({onEnter})` can't throw.
+
+**Contingency (device-verify):** if `params.createInstance` isn't honored on the
+target build, fall back to standard cards (which already carry the native like
+menu) and inject the «Совпадение %» badge post-append via
+`Lampa.Listener.follow('line', e => e.type==='append' && e.data.personal)`,
+reading `__match` off each card's data. The plan keeps the scoring (pure,
+fully-tested) independent of the rendering path.
 
 ## 6. Error handling
 
