@@ -173,6 +173,50 @@
     return { positives: positives.slice(0, 8), negatives: negatives.slice(0, 6), ratedIds: ratedIds };
   }
 
+  var dislikeCache = { sig: '', set: null };
+
+  function negativeSignature(negatives) {
+    var s = '', i;
+    for (i = 0; i < negatives.length; i++) s += negatives[i].id + (negatives[i].strong ? 's' : 'm') + ',';
+    return s;
+  }
+
+  // Build {strong:{id:true}, mild:{id:true}} from negatives' ids + their TMDB look-alikes.
+  function buildDislikeSet(network, negatives, done) {
+    var sig = negativeSignature(negatives);
+    if (dislikeCache.set && dislikeCache.sig === sig) { done(dislikeCache.set); return; }
+    var set = { strong: {}, mild: {} }, i;
+    for (i = 0; i < negatives.length; i++) (negatives[i].strong ? set.strong : set.mild)[negatives[i].id] = true;
+    if (!negatives.length) { dislikeCache = { sig: sig, set: set }; done(set); return; }
+    var k = 0;
+    function step() {
+      if (k >= negatives.length) { dislikeCache = { sig: sig, set: set }; done(set); return; }
+      var n = negatives[k], bucket = n.strong ? set.strong : set.mild;
+      fetchResults(network, n.media + '/' + n.id + '/recommendations', n.media, function (results) {
+        var j; for (j = 0; j < results.length && j < 20; j++) { if (results[j] && results[j].id != null) bucket[results[j].id] = true; }
+        k++; step();
+      });
+    }
+    step();
+  }
+
+  function dislikeRank(set, id) {
+    if (!set || id == null) return 0;
+    if (set.strong[id]) return 2;
+    if (set.mild[id]) return 1;
+    return 0;
+  }
+
+  // Stable de-prioritization: normals keep order, 😴 below them, 💩 last. Nothing removed.
+  function reorderByDislike(results, set) {
+    if (!set) return results;
+    var ranked = [], i;
+    for (i = 0; i < results.length; i++) ranked.push({ r: results[i], rank: dislikeRank(set, results[i] && results[i].id), i: i });
+    ranked.sort(function (a, b) { return (a.rank - b.rank) || (a.i - b.i); });
+    var out = []; for (i = 0; i < ranked.length; i++) out.push(ranked[i].r);
+    return out;
+  }
+
   var RECS_TITLE = 'Рекомендации для Вас';
   var recsCache = { sig: '', row: null };
   function setRecsDirty() { recsCache.sig = ''; recsCache.row = null; }
@@ -506,6 +550,8 @@
       _gradeOf: gradeOf,
       _collectReactions: collectReactions,
       _collectSignals: collectSignals,
+      _buildDislikeSet: buildDislikeSet,
+      _reorderByDislike: reorderByDislike,
       _loadRecommendations: loadRecommendations,
       _tmdbUrl: tmdbUrl,
       _start: start,
