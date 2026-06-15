@@ -39,3 +39,11 @@ test('starts immediately when appready is already true', () => {
   loadPlugin(mock);
   assert.strictEqual(mock.menuList._children.length, 1);
 });
+
+test('start() is idempotent — a second app:ready does not double-inject', () => {
+  const mock = makeMock();
+  loadPlugin(mock);
+  mock.calls.listeners.app({ type: 'ready' });
+  mock.calls.listeners.app({ type: 'ready' }); // fire ready again
+  assert.strictEqual(mock.menuList._children.length, 1);
+});
