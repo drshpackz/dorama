@@ -127,6 +127,94 @@
     return Math.round(55 + 44 * r);
   }
 
+  var RECS_TITLE = 'Рекомендации для Вас';
+  var recsCache = { sig: '', row: null };
+  function setRecsDirty() { recsCache.sig = ''; recsCache.row = null; }
+
+  function makePredictionCard(elem) { return new PredictionCard(elem); }
+
+  // Stamp the verified per-item factory hook so the Line renders PredictionCard.
+  function recommendationsRow(results, errored) {
+    var i;
+    for (i = 0; i < results.length; i++) {
+      results[i].params = results[i].params || {};
+      results[i].params.createInstance = makePredictionCard;
+    }
+    return { title: RECS_TITLE, personal: true, results: results, source: 'tmdb', __errored: !!errored };
+  }
+
+  function promptCard() {
+    return { __prompt: true, title: 'Лайкните дорамы, чтобы получить персональные рекомендации' };
+  }
+
+  function favGet(type) {
+    return (Lampa.Favorite && Lampa.Favorite.get) ? (Lampa.Favorite.get({ type: type }) || []) : [];
+  }
+
+  function collectExcludeIds() {
+    var ids = [], types = ['like', 'history', 'viewed'], t, i, list;
+    for (t = 0; t < types.length; t++) {
+      list = favGet(types[t]);
+      for (i = 0; i < list.length; i++) { if (list[i] && list[i].id != null) ids.push(list[i].id); }
+    }
+    return ids;
+  }
+
+  function likedSignature(liked) {
+    var s = '', i;
+    for (i = 0; i < liked.length; i++) { s += (liked[i].id || '') + ','; }
+    return s;
+  }
+
+  // Build the personalized row. done(row) — row.results is [picks], [prompt], or [].
+  function loadRecommendations(network, done) {
+    var liked = favGet('like');
+    var sig = likedSignature(liked);
+    if (recsCache.row && recsCache.sig === sig) { done(recsCache.row); return; }
+
+    var seeds = collectSeeds(liked, 8);
+    if (!seeds.length) { emit(recommendationsRow([promptCard()], false)); return; }
+
+    var profile = buildTasteProfile(seeds);
+    var excludeIds = collectExcludeIds();
+    var coCount = {}, lists = [], s = 0, errors = 0;
+
+    function nextSeed() {
+      if (s >= seeds.length) { finish(); return; }
+      var seed = seeds[s], type = seedType(seed);
+      fetchResults(network, type + '/' + seed.id + '/recommendations', type, function (results, totalPages, err) {
+        if (err) errors++;
+        var seen = {}, i, r;
+        for (i = 0; i < results.length; i++) {
+          r = results[i]; if (!r || r.id == null) continue;
+          if (!seen[r.id]) { seen[r.id] = true; coCount[r.id] = (coCount[r.id] || 0) + 1; }
+        }
+        lists.push(results); s++; nextSeed();
+      });
+    }
+
+    function finish() {
+      var exclude = excludeIds.slice(), i;
+      for (i = 0; i < seeds.length; i++) exclude.push(seeds[i].id);
+      var pool = mergeRecommendations(lists, exclude, 1000);
+      var scored = [], c, sc;
+      for (i = 0; i < pool.length; i++) {
+        c = pool[i]; if (!c.poster_path) continue;
+        sc = scoreCandidate(c, profile, coCount[c.id]);
+        c.__score = sc; c.__match = predictionPercent(sc);
+        scored.push(c);
+      }
+      scored.sort(function (a, b) { return b.__score - a.__score; });
+      var top = scored.slice(0, 20);
+      if (!top.length) { emit(recommendationsRow([], errors > 0)); return; }
+      emit(recommendationsRow(top, false));
+    }
+
+    function emit(row) { recsCache = { sig: sig, row: row }; done(row); }
+
+    nextSeed();
+  }
+
   var ICON =
     '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
     '<path d="M3 5.5C3 4.4 3.9 3.5 5 3.5H19C20.1 3.5 21 4.4 21 5.5V18.5C21 19.6 20.1 20.5 19 20.5H5C3.9 20.5 3 19.6 3 18.5V5.5Z" stroke="currentColor" stroke-width="1.6"/>' +
@@ -317,6 +405,7 @@
       _buildTasteProfile: buildTasteProfile,
       _scoreCandidate: scoreCandidate,
       _predictionPercent: predictionPercent,
+      _loadRecommendations: loadRecommendations,
       _tmdbUrl: tmdbUrl,
       _start: start,
       _addMenuItem: addMenuItem,

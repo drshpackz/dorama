@@ -49,3 +49,65 @@ test('buildTasteProfile is safe on empty seeds (no genres, no division by zero)'
   assert.deepStrictEqual(p.langs, {});
   assert.strictEqual(p.topLang, '');
 });
+
+test('loadRecommendations builds a personal row sorted by match, excluding liked', () => {
+  const mock = makeMock({
+    favorites: { like: [{ id: 100, original_language: 'ko', genre_ids: [18, 80], vote_average: 8, first_air_date: '2020-01-01' }], history: [], viewed: [] },
+    responder: function (url) {
+      if (url.indexOf('/recommendations') >= 0) return { results: [
+        { id: 201, original_language: 'ko', genre_ids: [18, 80], vote_average: 8.5, vote_count: 500, poster_path: '/a.jpg' },
+        { id: 100, original_language: 'ko', genre_ids: [18], vote_average: 9, vote_count: 900, poster_path: '/b.jpg' }, // liked → excluded
+        { id: 202, original_language: 'en', genre_ids: [35], vote_average: 6, vote_count: 50, poster_path: '/c.jpg' }
+      ] };
+      return { results: [] };
+    }
+  });
+  const api = loadPlugin(mock);
+  let row;
+  api._loadRecommendations(new mock.Lampa.Reguest(), function (r) { row = r; });
+  assert.strictEqual(row.title, 'Рекомендации для Вас');
+  assert.ok(row.personal);
+  const ids = row.results.map(c => c.id);
+  assert.ok(ids.indexOf(100) < 0, 'liked seed excluded');
+  assert.strictEqual(row.results[0].id, 201, 'ko + genre + rating ranks first');
+  assert.ok(row.results[0].__match >= 55 && row.results[0].__match <= 99);
+  assert.strictEqual(typeof row.results[0].params.createInstance, 'function'); // custom card factory stamped
+});
+
+test('loadRecommendations shows a prompt card when there are no Asian likes', () => {
+  const mock = makeMock({ favorites: { like: [{ id: 1, original_language: 'en', genre_ids: [35] }] } });
+  const api = loadPlugin(mock);
+  let row;
+  api._loadRecommendations(new mock.Lampa.Reguest(), function (r) { row = r; });
+  assert.strictEqual(row.results.length, 1);
+  assert.ok(row.results[0].__prompt);
+  assert.strictEqual(typeof row.results[0].params.createInstance, 'function');
+});
+
+test('loadRecommendations flags an error row when seeds exist but every request fails', () => {
+  const mock = makeMock({
+    favorites: { like: [{ id: 100, original_language: 'ko', genre_ids: [18], first_air_date: '2020-01-01' }] },
+    responder: function () { return { __error: 401 }; }
+  });
+  const api = loadPlugin(mock);
+  let row;
+  api._loadRecommendations(new mock.Lampa.Reguest(), function (r) { row = r; });
+  assert.strictEqual(row.results.length, 0);
+  assert.strictEqual(row.__errored, true);
+});
+
+test('loadRecommendations caches by liked-set signature (no refetch) until favorites change', () => {
+  const mock = makeMock({
+    favorites: { like: [{ id: 100, original_language: 'ko', genre_ids: [18], first_air_date: '2020-01-01' }], history: [], viewed: [] },
+    responder: function (url) { return url.indexOf('/recommendations') >= 0 ? { results: [{ id: 201, original_language: 'ko', genre_ids: [18], vote_average: 8, vote_count: 200, poster_path: '/a.jpg' }] } : { results: [] }; }
+  });
+  const api = loadPlugin(mock);
+  const net = new mock.Lampa.Reguest();
+  api._loadRecommendations(net, function () {});
+  const after1 = mock.calls.requests.length;
+  api._loadRecommendations(net, function () {});
+  assert.strictEqual(mock.calls.requests.length, after1, 'second identical call served from cache');
+  mock.Lampa.Favorite.toggle('like', { id: 300, original_language: 'ko', genre_ids: [80], first_air_date: '2021-01-01' }); // changes likes + fires state:changed
+  api._loadRecommendations(net, function () {});
+  assert.ok(mock.calls.requests.length > after1, 'recompute after favorites changed');
+});
