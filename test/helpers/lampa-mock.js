@@ -22,8 +22,8 @@ function makeMock(options) {
   var menuList = makeEl('');               // the .menu .menu__list element
   function $(arg) {
     if (typeof arg === 'string' && arg.charAt(0) === '<') return makeEl(arg);
-    // selector query — only '.menu .menu__list' is used
-    return { eq: function () { return menuList; }, length: 1 };
+    if (typeof arg === 'string') return { eq: function () { return menuList; }, length: 1 };
+    return arg; // already an element-like object → pass through
   }
 
   // canned TMDB responses keyed by URL substring; override via options.responder
@@ -86,7 +86,18 @@ function makeMock(options) {
       key: function () { return 'TESTKEY'; }
     },
     Arrays: { shuffle: function (a) { return a; }, destroy: function () {} },
-    Storage: { field: function () { return 'ru'; }, get: function (k, def) { return def; }, set: function () {} },
+    Storage: (function () {
+      var store = {};
+      if (options.mine_reactions) store.mine_reactions = options.mine_reactions;
+      if (options.storage) for (var sk in options.storage) if (options.storage.hasOwnProperty(sk)) store[sk] = options.storage[sk];
+      var changeFns = [];
+      return {
+        field: function () { return 'ru'; },
+        get: function (k, def) { return (k in store) ? store[k] : def; },
+        set: function (k, v) { store[k] = v; for (var i = 0; i < changeFns.length; i++) changeFns[i]({ name: k, value: v }); },
+        listener: { follow: function (name, fn) { if (name === 'change') changeFns.push(fn); }, send: function () {} }
+      };
+    })(),
     // Records constructed empties so tests can assert the error/empty descr.
     Empty: function (params) {
       calls.empties.push(params || {});
