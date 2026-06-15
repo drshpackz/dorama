@@ -119,7 +119,7 @@
 
     function loadRecos() {
       var offset = Math.floor((window.dorama_reco_offset || 0)) % ANCHORS.length;
-      window.dorama_reco_offset = (offset + 5) % ANCHORS.length; // rotate seeds across opens (clamped)
+      window.dorama_reco_offset = (offset + 7) % ANCHORS.length; // step 7 is coprime with 20 -> seed mix varies widely across opens (clamped)
       var picked = pickAnchors(ANCHORS, 5, offset);
       var anchorIds = [], lists = [], k = 0, p;
       for (p = 0; p < picked.length; p++) anchorIds.push(picked[p].id);

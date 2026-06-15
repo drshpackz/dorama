@@ -139,8 +139,9 @@ collaborative filtering.
 
 - Maintain `var ANCHORS = [{id:496243,type:'movie'}, … {id:156484,type:'tv'}]`
   (all 20).
-- On build, select a **bounded subset** (≈6–8 anchors; rotate via a counter or
-  `Lampa.Arrays.shuffle` so the row varies between opens) to limit requests.
+- On build, select a **bounded subset** (5 anchors per open; the rotation offset
+  steps by 7 — coprime with the 20-anchor pool — so the seed mix varies widely
+  across opens) to limit requests.
 - For each selected anchor fetch `type + '/' + id + '/recommendations'`
   (`movie/{id}/recommendations` or `tv/{id}/recommendations`). Optionally
   supplement a thin anchor with `…/similar`.
