@@ -119,7 +119,7 @@
 
     function loadRecos() {
       var offset = Math.floor((window.dorama_reco_offset || 0)) % ANCHORS.length;
-      window.dorama_reco_offset = offset + 5; // rotate seeds across opens
+      window.dorama_reco_offset = (offset + 5) % ANCHORS.length; // rotate seeds across opens (clamped)
       var picked = pickAnchors(ANCHORS, 5, offset);
       var anchorIds = [], lists = [], k = 0, p;
       for (p = 0; p < picked.length; p++) anchorIds.push(picked[p].id);
@@ -135,8 +135,8 @@
         var merged = mergeRecommendations(lists, anchorIds, 40);
         var out = [];
         if (merged.length) out.push({ title: 'В духе «Паразитов»', results: merged, source: 'tmdb' });
-        var final = out.concat(curated);
-        if (final.length) onDone(final); else onEmpty();
+        var allRows = out.concat(curated);
+        if (allRows.length) onDone(allRows); else onEmpty();
       }
       nextAnchor();
     }
@@ -164,6 +164,9 @@
 
     // Row "more" → open that row's full infinite-scroll grid (FR3 shape).
     comp.onMore = function (row) {
+      // The recommendation row is a merged feed with no single Discover URL,
+      // so it has no "more" grid — skip it instead of pushing url:undefined.
+      if (!row || !row.url) return;
       Lampa.Activity.push({
         url: row.url, title: row.title,
         component: 'category_full', source: 'tmdb', card_type: true, page: 1

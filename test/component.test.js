@@ -58,3 +58,13 @@ test('recommendation items are tagged with media_type for correct detail routing
   const recos = comp._built[0].results;
   recos.forEach(it => assert.ok(it.media_type === 'movie' || it.media_type === 'tv'));
 });
+
+test('component.onMore ignores the recommendation row (no url → no broken grid)', () => {
+  const mock = makeMock();
+  const api = loadPlugin(mock);
+  const comp = api._component({});
+  comp.create();
+  const before = mock.calls.activityPush.length;
+  comp.onMore({ title: 'В духе «Паразитов»', results: [], source: 'tmdb' }); // no url
+  assert.strictEqual(mock.calls.activityPush.length, before);
+});
