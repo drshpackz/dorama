@@ -62,6 +62,68 @@
     return out;
   }
 
+  // --- personalized recommender (pure helpers) ---
+  var ASIAN_LANGS = { ko: 1, ja: 1, zh: 1, th: 1 };
+  var ASIAN_COUNTRIES = { KR: 1, JP: 1, CN: 1, TW: 1, HK: 1, TH: 1 };
+  var SCORE_MAX = 9.0;
+
+  function isAsianDrama(card) {
+    if (!card) return false;
+    if (card.original_language && ASIAN_LANGS[card.original_language]) return true;
+    var oc = card.origin_country || [], i;
+    for (i = 0; i < oc.length; i++) { if (ASIAN_COUNTRIES[oc[i]]) return true; }
+    return false;
+  }
+
+  // Liked cards filtered to Asian dramas, most-recent-first, capped at `limit`.
+  function collectSeeds(liked, limit) {
+    var out = [], i;
+    liked = liked || [];
+    for (i = 0; i < liked.length && out.length < limit; i++) {
+      if (isAsianDrama(liked[i])) out.push(liked[i]);
+    }
+    return out;
+  }
+
+  // TV vs movie for a stored favorite card (mirrors core recomend.js).
+  function seedType(card) {
+    return (card.number_of_seasons || card.first_air_date || card.name) ? 'tv' : 'movie';
+  }
+
+  // Normalized genre preference + language distribution across seeds (no API calls).
+  function buildTasteProfile(seeds) {
+    var genreCount = {}, total = 0, langCount = {}, i, j, gids, g, ln;
+    for (i = 0; i < seeds.length; i++) {
+      gids = seeds[i].genre_ids || [];
+      for (j = 0; j < gids.length; j++) { g = gids[j]; genreCount[g] = (genreCount[g] || 0) + 1; total++; }
+      ln = seeds[i].original_language; if (ln) langCount[ln] = (langCount[ln] || 0) + 1;
+    }
+    var genreWeight = {}, langs = {}, topLang = '', topN = -1, l;
+    for (g in genreCount) { if (genreCount.hasOwnProperty(g)) genreWeight[g] = total ? genreCount[g] / total : 0; }
+    for (l in langCount) { if (langCount.hasOwnProperty(l)) { langs[l] = true; if (langCount[l] > topN) { topN = langCount[l]; topLang = l; } } }
+    return { genreWeight: genreWeight, langs: langs, topLang: topLang };
+  }
+
+  // Weighted content+collaborative score for one candidate.
+  function scoreCandidate(c, profile, coCount) {
+    var co = Math.min(coCount || 0, 3) / 3;
+    var gids = c.genre_ids || [], over = 0, i;
+    for (i = 0; i < gids.length; i++) { over += profile.genreWeight[gids[i]] || 0; }
+    if (over > 1) over = 1;
+    var lang = c.original_language;
+    var langMatch = lang === profile.topLang ? 1 : (profile.langs[lang] ? 0.6 : (ASIAN_LANGS[lang] ? 0.3 : 0));
+    var rating = Math.max(0, Math.min(10, c.vote_average || 0)) / 10;
+    var votesConf = (c.vote_count || 0) >= 100 ? 1 : (c.vote_count || 0) / 100;
+    return 3.0 * co + 2.5 * over + 1.5 * langMatch + 1.5 * rating + 0.5 * votesConf;
+  }
+
+  // Map a raw score to a 55..99% "match" band.
+  function predictionPercent(score) {
+    var r = score / SCORE_MAX;
+    if (r < 0) r = 0; if (r > 1) r = 1;
+    return Math.round(55 + 44 * r);
+  }
+
   var ICON =
     '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
     '<path d="M3 5.5C3 4.4 3.9 3.5 5 3.5H19C20.1 3.5 21 4.4 21 5.5V18.5C21 19.6 20.1 20.5 19 20.5H5C3.9 20.5 3 19.6 3 18.5V5.5Z" stroke="currentColor" stroke-width="1.6"/>' +
@@ -248,6 +310,10 @@
       ANCHORS: ANCHORS,
       pickAnchors: pickAnchors,
       mergeRecommendations: mergeRecommendations,
+      _collectSeeds: collectSeeds,
+      _buildTasteProfile: buildTasteProfile,
+      _scoreCandidate: scoreCandidate,
+      _predictionPercent: predictionPercent,
       _tmdbUrl: tmdbUrl,
       _start: start,
       _addMenuItem: addMenuItem,
