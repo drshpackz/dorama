@@ -1,0 +1,9 @@
+{
+  "name": "lampa-dorama",
+  "version": "1.0.0",
+  "description": "Lampa TV plugin: curated dark Korean social-thriller catalog (Дорама)",
+  "scripts": {
+    "test": "node --test"
+  },
+  "license": "MIT"
+}

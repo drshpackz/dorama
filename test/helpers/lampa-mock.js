@@ -1,0 +1,85 @@
+'use strict';
+const path = require('path');
+
+// --- minimal jQuery-like element ---
+function makeEl(html) {
+  return {
+    _html: html || '',
+    _handlers: {},
+    _children: [],
+    on: function (ev, fn) { this._handlers[ev] = fn; return this; },
+    append: function (child) { this._children.push(child); return this; },
+    trigger: function (ev) { if (this._handlers[ev]) this._handlers[ev](); return this; },
+    text: function () { var m = /menu__text[^>]*>([^<]*)</.exec(this._html); return m ? m[1] : ''; }
+  };
+}
+
+// --- mock factory: returns { Lampa, $, window, calls } ---
+function makeMock(options) {
+  options = options || {};
+  var calls = { activityPush: [], componentAdd: {}, listeners: {}, requests: [], clears: 0 };
+
+  var menuList = makeEl('');               // the .menu .menu__list element
+  function $(arg) {
+    if (typeof arg === 'string' && arg.charAt(0) === '<') return makeEl(arg);
+    // selector query — only '.menu .menu__list' is used
+    return { eq: function () { return menuList; }, length: 1 };
+  }
+
+  // canned TMDB responses keyed by URL substring; override via options.responder
+  function defaultResponder(url) {
+    if (url.indexOf('recommendations') >= 0) {
+      // derive a couple of deterministic ids from the anchor id in the path
+      var m = /\/(\d+)\/recommendations/.exec(url);
+      var base = m ? parseInt(m[1], 10) : 0;
+      return { results: [{ id: base + 1, title: 'rec' + (base + 1) }, { id: base + 2, title: 'rec' + (base + 2) }] };
+    }
+    return { results: [{ id: 1000, name: 'row-item' }], total_pages: 12 };
+  }
+  var responder = options.responder || defaultResponder;
+
+  function Reguest() {
+    this.silent = function (url, ok /*, err */) {
+      calls.requests.push(url);
+      var json = responder(url);
+      ok(json);
+    };
+    this.clear = function () { calls.clears++; };
+  }
+
+  // Mock InteractionMain: records build()/empty()/destroy()
+  function InteractionMain(object) {
+    this.object = object;
+    this.activity = { loader: function () {}, toggle: function () {} };
+    this.build = function (data) { this._built = data; };
+    this.empty = function () { this._empty = true; };
+    this.render = function () { return {}; };
+    this.destroy = function () { this._destroyed = true; };
+  }
+
+  var Lampa = {
+    appready: false,
+    Listener: { follow: function (name, fn) { calls.listeners[name] = fn; } },
+    Activity: { push: function (o) { calls.activityPush.push(o); } },
+    Component: { add: function (name, fn) { calls.componentAdd[name] = fn; } },
+    InteractionMain: InteractionMain,
+    Reguest: Reguest,
+    TMDB: { api: function (url) { return 'https://api.themoviedb.org/3/' + url + (url.indexOf('?') >= 0 ? '&' : '?') + 'api_key=K&language=ru'; } },
+    Arrays: { shuffle: function (a) { return a; }, destroy: function () {} },
+    Storage: { field: function () { return 'ru'; }, get: function (k, def) { return def; }, set: function () {} }
+  };
+
+  return { Lampa: Lampa, $: $, calls: calls, menuList: menuList };
+}
+
+// Load dorama.js fresh with the given mock installed as globals.
+function loadPlugin(mock) {
+  global.Lampa = mock.Lampa;
+  global.$ = mock.$;
+  global.window = mock.Lampa.appready ? { appready: true } : { appready: false };
+  var p = path.resolve(__dirname, '..', '..', 'dorama.js');
+  delete require.cache[require.resolve(p)];
+  return require(p); // returns the exported helpers object
+}
+
+module.exports = { makeMock: makeMock, loadPlugin: loadPlugin, makeEl: makeEl };
