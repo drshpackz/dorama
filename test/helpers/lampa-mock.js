@@ -17,7 +17,7 @@ function makeEl(html) {
 // --- mock factory: returns { Lampa, $, window, calls } ---
 function makeMock(options) {
   options = options || {};
-  var calls = { activityPush: [], componentAdd: {}, listeners: {}, requests: [], clears: 0, empties: [], loaderCalls: [], toggles: 0 };
+  var calls = { activityPush: [], componentAdd: {}, listeners: {}, requests: [], clears: 0, empties: [], loaderCalls: [], toggles: 0, favToggles: [], noty: [] };
 
   var menuList = makeEl('');               // the .menu .menu__list element
   function $(arg) {
@@ -71,7 +71,10 @@ function makeMock(options) {
 
   var Lampa = {
     appready: false,
-    Listener: { follow: function (name, fn) { calls.listeners[name] = fn; } },
+    Listener: {
+      follow: function (name, fn) { calls.listeners[name] = fn; },
+      send: function (name, ev) { if (calls.listeners[name]) calls.listeners[name](ev); }
+    },
     Activity: { push: function (o) { calls.activityPush.push(o); } },
     Component: { add: function (name, fn) { calls.componentAdd[name] = fn; } },
     InteractionMain: InteractionMain,
@@ -90,7 +93,31 @@ function makeMock(options) {
       this.render = function () { return makeEl('<div class="empty">' + ((params && params.descr) || '') + '</div>'); };
       this.start = function () { calls.emptyStart = (calls.emptyStart || 0) + 1; };
     },
-    Controller: { add: function () {}, toggle: function () {}, collectionSet: function () {}, collectionFocus: function () {} }
+    Controller: { add: function () {}, toggle: function () {}, collectionSet: function () {}, collectionFocus: function () {} },
+    Noty: { show: function (m) { calls.noty.push(m); } },
+    Api: { img: function (path, size) { return 'IMG:' + (path || ''); } },
+    Favorite: (function () {
+      var store = options.favorites || { like: [], history: [], viewed: [] };
+      function idx(list, id) { for (var i = 0; i < list.length; i++) { if (list[i].id === id) return i; } return -1; }
+      return {
+        get: function (p) { return (store[p.type] || []).slice(); },
+        check: function (card) {
+          var r = { any: false }, types = ['like', 'history', 'viewed', 'book', 'wath'], i;
+          for (i = 0; i < types.length; i++) { r[types[i]] = idx(store[types[i]] || [], card.id) >= 0; if (r[types[i]]) r.any = true; }
+          return r;
+        },
+        toggle: function (where, card) {
+          store[where] = store[where] || [];
+          var i = idx(store[where], card.id), added;
+          if (i >= 0) { store[where].splice(i, 1); added = false; } else { store[where].unshift(card); added = true; }
+          calls.favToggles.push({ where: where, id: card.id });
+          if (calls.listeners['state:changed']) calls.listeners['state:changed']({ target: 'favorite', reason: 'update', type: where, card: card });
+          return added;
+        },
+        add: function (where, card) { store[where] = store[where] || []; if (idx(store[where], card.id) < 0) store[where].unshift(card); },
+        remove: function (where, card) { store[where] = store[where] || []; var i = idx(store[where], card.id); if (i >= 0) store[where].splice(i, 1); }
+      };
+    })()
   };
 
   return { Lampa: Lampa, $: $, calls: calls, menuList: menuList };
