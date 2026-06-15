@@ -40,8 +40,16 @@ test('exact verified URLs are preserved character-for-character', () => {
   buildRows().forEach(r => { byTitle[r.title] = r.url; });
   assert.strictEqual(byTitle['Корейские триллеры (сериалы)'],
     'discover/tv?with_original_language=ko&with_genres=80|9648&sort_by=popularity.desc&vote_count.gte=40');
+  assert.strictEqual(byTitle['Корейское кино: триллеры'],
+    'discover/movie?with_original_language=ko&with_genres=53|80|9648&sort_by=popularity.desc&vote_count.gte=50');
   assert.strictEqual(byTitle['Социальные триллеры (неравенство)'],
     'discover/movie?with_original_language=ko&with_genres=53,18&sort_by=popularity.desc&vote_count.gte=50');
+  assert.strictEqual(byTitle['Выживание и антиутопия'],
+    'discover/tv?with_original_language=ko&with_genres=10765|18|9648&with_keywords=4565|10349&sort_by=popularity.desc&vote_count.gte=10');
+  assert.strictEqual(byTitle['Дом-ловушка (бетон / многоэтажка)'],
+    'discover/movie?with_original_language=ko&with_keywords=286239|33347|4565|10349&sort_by=popularity.desc&vote_count.gte=10');
+  assert.strictEqual(byTitle['Игры разума и саспенс'],
+    'discover/movie?with_original_language=ko&with_genres=53|9648&with_keywords=12565|10714|9748&sort_by=popularity.desc&vote_count.gte=25');
   assert.strictEqual(byTitle['Лучшее: корейские триллеры'],
     'discover/movie?with_original_language=ko&with_genres=53|80&without_genres=99,10770&sort_by=vote_average.desc&vote_count.gte=400&vote_average.gte=7');
 });
