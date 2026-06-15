@@ -274,68 +274,59 @@
     return s;
   }
 
-  // Build the personalized row. done(row) — row.results is [picks], [prompt], or [].
-  function loadRecommendations(network, done) {
-    var liked = favGet('like');
-    var sig = likedSignature(liked);
+  // Build the personalized row. done(row); row.results is [picks] or [] (cold/empty).
+  // dislikeSet (or null) excludes disliked look-alikes.
+  function loadRecommendations(network, dislikeSet, done) {
+    var signals = collectSignals();
+    var positives = signals.positives;
+    var sig = positiveSignature(positives);
     if (recsCache.row && recsCache.sig === sig) { done(recsCache.row); return; }
+    if (!positives.length) { emit(recommendationsRow([], false, true)); return; }
 
-    var seeds = collectSeeds(liked, 8);
-    if (!seeds.length) { emit(recommendationsRow([promptCard()], false)); return; }
+    var profile = buildTasteProfile(positives);
+    var exclude = collectExcludeIds(), key, ei;
+    for (key in signals.ratedIds) if (signals.ratedIds.hasOwnProperty(key)) exclude.push(parseInt(key, 10));
+    for (ei = 0; ei < positives.length; ei++) exclude.push(positives[ei].id);
+    var coScore = {}, lists = [], errors = 0;
 
-    var profile = buildTasteProfile(seeds);
-    var excludeIds = collectExcludeIds();
-    var exclude = excludeIds.slice(), ei;
-    for (ei = 0; ei < seeds.length; ei++) exclude.push(seeds[ei].id);
-    var coCount = {}, lists = [], errors = 0;
-
-    // Fetch one endpoint for one seed; accumulate co-occurrence (per distinct
-    // candidate per seed) and the raw result list.
-    function gather(path, type, cb) {
+    function gather(path, weight, type, cb) {
       fetchResults(network, path, type, function (results, totalPages, err) {
         if (err) errors++;
         var seen = {}, i, r;
-        for (i = 0; i < results.length; i++) {
-          r = results[i]; if (!r || r.id == null) continue;
-          if (!seen[r.id]) { seen[r.id] = true; coCount[r.id] = (coCount[r.id] || 0) + 1; }
-        }
+        for (i = 0; i < results.length; i++) { r = results[i]; if (!r || r.id == null) continue; if (!seen[r.id]) { seen[r.id] = true; coScore[r.id] = (coScore[r.id] || 0) + weight; } }
         lists.push(results); cb();
       });
     }
-
-    // Run `endpoint` across all seeds sequentially, then call doneCb.
     function pass(endpoint, doneCb) {
       var k = 0;
       function step() {
-        if (k >= seeds.length) { doneCb(); return; }
-        var seed = seeds[k], type = seedType(seed);
-        gather(type + '/' + seed.id + '/' + endpoint, type, function () { k++; step(); });
+        if (k >= positives.length) { doneCb(); return; }
+        var s = positives[k];
+        gather(s.media + '/' + s.id + '/' + endpoint, s.weight, s.media, function () { k++; step(); });
       }
       step();
     }
-
     pass('recommendations', function () {
-      // Collaborative pool thin? Deepen with /similar (content signal).
       var distinct = mergeRecommendations(lists, exclude, 100000).length;
       if (distinct >= MIN_POOL) { finish(); return; }
       pass('similar', finish);
     });
-
     function finish() {
       var pool = mergeRecommendations(lists, exclude, 1000);
       var scored = [], i, c, sc;
       for (i = 0; i < pool.length; i++) {
-        c = pool[i]; if (!c.poster_path) continue;
-        sc = scoreCandidate(c, profile, coCount[c.id]);
+        c = pool[i];
+        if (!c.poster_path) continue;
+        if (dislikeRank(dislikeSet, c.id) > 0) continue;
+        sc = scoreCandidate(c, profile, coScore[c.id]);
         c.__score = sc; c.__match = predictionPercent(sc);
         scored.push(c);
       }
       scored.sort(function (a, b) { return b.__score - a.__score; });
       var top = scored.slice(0, 20);
-      if (!top.length) { emit(recommendationsRow([], errors > 0)); return; }
-      emit(recommendationsRow(top, false));
+      if (!top.length) { emit(recommendationsRow([], errors > 0, false)); return; }
+      emit(recommendationsRow(top, false, false));
     }
-
     function emit(row) { recsCache = { sig: sig, row: row }; done(row); }
   }
 

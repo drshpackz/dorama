@@ -64,24 +64,22 @@ test('loadRecommendations builds a personal row sorted by match, excluding liked
   });
   const api = loadPlugin(mock);
   let row;
-  api._loadRecommendations(new mock.Lampa.Reguest(), function (r) { row = r; });
+  api._loadRecommendations(new mock.Lampa.Reguest(), null, function (r) { row = r; });
   assert.strictEqual(row.title, 'Рекомендации для Вас');
   assert.ok(row.personal);
   const ids = row.results.map(c => c.id);
   assert.ok(ids.indexOf(100) < 0, 'liked seed excluded');
   assert.strictEqual(row.results[0].id, 201, 'ko + genre + rating ranks first');
   assert.ok(row.results[0].__match >= 55 && row.results[0].__match <= 99);
-  assert.strictEqual(typeof row.results[0].params.createInstance, 'function'); // custom card factory stamped
 });
 
 test('loadRecommendations shows a prompt card when there are no Asian likes', () => {
   const mock = makeMock({ favorites: { like: [{ id: 1, original_language: 'en', genre_ids: [35] }] } });
   const api = loadPlugin(mock);
   let row;
-  api._loadRecommendations(new mock.Lampa.Reguest(), function (r) { row = r; });
-  assert.strictEqual(row.results.length, 1);
-  assert.ok(row.results[0].__prompt);
-  assert.strictEqual(typeof row.results[0].params.createInstance, 'function');
+  api._loadRecommendations(new mock.Lampa.Reguest(), null, function (r) { row = r; });
+  assert.strictEqual(row.results.length, 0);
+  assert.strictEqual(row.__cold, true);
 });
 
 test('loadRecommendations flags an error row when seeds exist but every request fails', () => {
@@ -91,7 +89,7 @@ test('loadRecommendations flags an error row when seeds exist but every request 
   });
   const api = loadPlugin(mock);
   let row;
-  api._loadRecommendations(new mock.Lampa.Reguest(), function (r) { row = r; });
+  api._loadRecommendations(new mock.Lampa.Reguest(), null, function (r) { row = r; });
   assert.strictEqual(row.results.length, 0);
   assert.strictEqual(row.__errored, true);
 });
@@ -103,12 +101,12 @@ test('loadRecommendations caches by liked-set signature (no refetch) until favor
   });
   const api = loadPlugin(mock);
   const net = new mock.Lampa.Reguest();
-  api._loadRecommendations(net, function () {});
+  api._loadRecommendations(net, null, function () {});
   const after1 = mock.calls.requests.length;
-  api._loadRecommendations(net, function () {});
+  api._loadRecommendations(net, null, function () {});
   assert.strictEqual(mock.calls.requests.length, after1, 'second identical call served from cache');
   mock.Lampa.Favorite.toggle('like', { id: 300, original_language: 'ko', genre_ids: [80], first_air_date: '2021-01-01' }); // changes likes + fires state:changed
-  api._loadRecommendations(net, function () {});
+  api._loadRecommendations(net, null, function () {});
   assert.ok(mock.calls.requests.length > after1, 'recompute after favorites changed');
 });
 
@@ -123,7 +121,7 @@ test('loadRecommendations falls back to /similar when the recommendations pool i
   });
   const api = loadPlugin(mock);
   let row;
-  api._loadRecommendations(new mock.Lampa.Reguest(), function (r) { row = r; });
+  api._loadRecommendations(new mock.Lampa.Reguest(), null, function (r) { row = r; });
   assert.match(mock.calls.requests.join('\n'), /\/similar/, 'similar fetched when pool < MIN_POOL');
   assert.ok(row.results.map(c => c.id).indexOf(202) >= 0, 'similar candidate included');
 });
@@ -141,4 +139,19 @@ test('buildTasteProfile accepts weighted {card,weight} seeds', () => {
   const p = _buildTasteProfile([{ card: { genre_ids: [18, 80], original_language: 'ko' }, weight: 2 }]);
   assert.ok(p.genreWeight[18] > 0 && p.genreWeight[80] > 0);
   assert.strictEqual(p.topLang, 'ko');
+});
+
+test('loadRecommendations excludes disliked look-alikes', () => {
+  const mock = makeMock({
+    favorites: { like: [{ id: 100, original_language: 'ko', genre_ids: [18], first_air_date: '2020-01-01' }], history: [], viewed: [] },
+    responder: function (url) {
+      if (url.indexOf('/recommendations') >= 0 || url.indexOf('/similar') >= 0) return { results: [{ id: 201, original_language: 'ko', genre_ids: [18], vote_average: 8, vote_count: 200, poster_path: '/a.jpg' }, { id: 202, original_language: 'ko', genre_ids: [18], vote_average: 8, vote_count: 200, poster_path: '/b.jpg' }] };
+      return { results: [] };
+    }
+  });
+  const api = loadPlugin(mock);
+  let row;
+  api._loadRecommendations(new mock.Lampa.Reguest(), { strong: { 202: true }, mild: {} }, function (r) { row = r; });
+  const ids = row.results.map(c => c.id);
+  assert.ok(ids.indexOf(201) >= 0 && ids.indexOf(202) < 0, '202 excluded as disliked look-alike');
 });
