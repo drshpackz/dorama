@@ -46,6 +46,7 @@
   var ASIAN_LANGS = { ko: 1, ja: 1, zh: 1, th: 1 };
   var ASIAN_COUNTRIES = { KR: 1, JP: 1, CN: 1, TW: 1, HK: 1, TH: 1 };
   var SCORE_MAX = 9.0;
+  var MIN_POOL = 20;
 
   function isAsianDrama(card) {
     if (!card) return false;
@@ -157,27 +158,45 @@
 
     var profile = buildTasteProfile(seeds);
     var excludeIds = collectExcludeIds();
-    var coCount = {}, lists = [], s = 0, errors = 0;
+    var exclude = excludeIds.slice(), ei;
+    for (ei = 0; ei < seeds.length; ei++) exclude.push(seeds[ei].id);
+    var coCount = {}, lists = [], errors = 0;
 
-    function nextSeed() {
-      if (s >= seeds.length) { finish(); return; }
-      var seed = seeds[s], type = seedType(seed);
-      fetchResults(network, type + '/' + seed.id + '/recommendations', type, function (results, totalPages, err) {
+    // Fetch one endpoint for one seed; accumulate co-occurrence (per distinct
+    // candidate per seed) and the raw result list.
+    function gather(path, type, cb) {
+      fetchResults(network, path, type, function (results, totalPages, err) {
         if (err) errors++;
         var seen = {}, i, r;
         for (i = 0; i < results.length; i++) {
           r = results[i]; if (!r || r.id == null) continue;
           if (!seen[r.id]) { seen[r.id] = true; coCount[r.id] = (coCount[r.id] || 0) + 1; }
         }
-        lists.push(results); s++; nextSeed();
+        lists.push(results); cb();
       });
     }
 
+    // Run `endpoint` across all seeds sequentially, then call doneCb.
+    function pass(endpoint, doneCb) {
+      var k = 0;
+      function step() {
+        if (k >= seeds.length) { doneCb(); return; }
+        var seed = seeds[k], type = seedType(seed);
+        gather(type + '/' + seed.id + '/' + endpoint, type, function () { k++; step(); });
+      }
+      step();
+    }
+
+    pass('recommendations', function () {
+      // Collaborative pool thin? Deepen with /similar (content signal).
+      var distinct = mergeRecommendations(lists, exclude, 100000).length;
+      if (distinct >= MIN_POOL) { finish(); return; }
+      pass('similar', finish);
+    });
+
     function finish() {
-      var exclude = excludeIds.slice(), i;
-      for (i = 0; i < seeds.length; i++) exclude.push(seeds[i].id);
       var pool = mergeRecommendations(lists, exclude, 1000);
-      var scored = [], c, sc;
+      var scored = [], i, c, sc;
       for (i = 0; i < pool.length; i++) {
         c = pool[i]; if (!c.poster_path) continue;
         sc = scoreCandidate(c, profile, coCount[c.id]);
@@ -191,8 +210,6 @@
     }
 
     function emit(row) { recsCache = { sig: sig, row: row }; done(row); }
-
-    nextSeed();
   }
 
   var ICON =
@@ -297,7 +314,7 @@
       var html, self = this;
       if (card.__prompt) {
         html = '<div class="card selector card--dorama-prompt"><div class="card__view">' +
-               '<div class="card__promo-text" style="padding:1.2em;text-align:center">' + (card.title || '') + '</div>' +
+               '<div class="card__promo-text" style="padding:1.2em;text-align:center">' + escHtml(card.title || '') + '</div>' +
                '</div></div>';
       } else {
         var title = card.title || card.name || card.original_title || card.original_name || '';

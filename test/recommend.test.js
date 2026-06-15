@@ -111,3 +111,19 @@ test('loadRecommendations caches by liked-set signature (no refetch) until favor
   api._loadRecommendations(net, function () {});
   assert.ok(mock.calls.requests.length > after1, 'recompute after favorites changed');
 });
+
+test('loadRecommendations falls back to /similar when the recommendations pool is thin', () => {
+  const mock = makeMock({
+    favorites: { like: [{ id: 100, original_language: 'ko', genre_ids: [18], first_air_date: '2020-01-01' }], history: [], viewed: [] },
+    responder: function (url) {
+      if (url.indexOf('/recommendations') >= 0) return { results: [{ id: 201, original_language: 'ko', genre_ids: [18], vote_average: 8, vote_count: 200, poster_path: '/a.jpg' }] };
+      if (url.indexOf('/similar') >= 0) return { results: [{ id: 202, original_language: 'ko', genre_ids: [18], vote_average: 7.5, vote_count: 150, poster_path: '/b.jpg' }] };
+      return { results: [] };
+    }
+  });
+  const api = loadPlugin(mock);
+  let row;
+  api._loadRecommendations(new mock.Lampa.Reguest(), function (r) { row = r; });
+  assert.match(mock.calls.requests.join('\n'), /\/similar/, 'similar fetched when pool < MIN_POOL');
+  assert.ok(row.results.map(c => c.id).indexOf(202) >= 0, 'similar candidate included');
+});
