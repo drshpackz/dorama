@@ -386,34 +386,40 @@
     });
   }
 
-  // Assemble the catalog: personalized recommendations row first, then curated.
+  // Assemble the catalog: build the dislike set first, fetch curated rows
+  // (de-prioritizing disliked look-alikes), then the personalized row first.
   function loadCatalog(network, onDone, onFail) {
     var rows = buildRows();
     var curated = [];
     var i = 0, errors = 0, lastStatus = 0;
-
+    var signals = collectSignals();
     function note(errStatus) { if (errStatus) { errors++; if (typeof errStatus === 'number' && errStatus > 0) lastStatus = errStatus; } }
 
-    function nextRow() {
-      if (i >= rows.length) { loadHead(); return; }
-      var row = rows[i];
-      fetchResults(network, row.url, row.method, function (results, totalPages, err) {
-        note(err);
-        if (results.length) curated.push({ title: row.title, results: results, url: row.url, method: row.method, source: 'tmdb', total_pages: totalPages });
-        i++; nextRow();
-      });
-    }
+    buildDislikeSet(network, signals.negatives, function (dislikeSet) {
+      function nextRow() {
+        if (i >= rows.length) { loadHead(dislikeSet); return; }
+        var row = rows[i];
+        fetchResults(network, row.url, row.method, function (results, totalPages, err) {
+          note(err);
+          if (results.length) curated.push({ title: row.title, results: reorderByDislike(results, dislikeSet), url: row.url, method: row.method, source: 'tmdb', total_pages: totalPages });
+          i++; nextRow();
+        });
+      }
+      nextRow();
+    });
 
-    function loadHead() {
-      loadRecommendations(network, function (recRow) {
+    function loadHead(dislikeSet) {
+      loadRecommendations(network, dislikeSet, function (recRow) {
+        if (recRow && recRow.__cold && !window.dorama_cold_noted) {
+          window.dorama_cold_noted = true;
+          if (Lampa.Noty && Lampa.Noty.show) Lampa.Noty.show('Лайкните или оцените дорамы, чтобы получить персональные рекомендации');
+        }
         var head = (recRow && recRow.results && recRow.results.length) ? [recRow] : [];
         var allRows = head.concat(curated);
         if (allRows.length) onDone(allRows);
         else onFail({ errored: errors > 0 || (recRow && recRow.__errored), status: lastStatus });
       });
     }
-
-    nextRow();
   }
 
   function componentDorama(object) {

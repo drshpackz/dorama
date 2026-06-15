@@ -37,14 +37,14 @@ test('component.onMore pushes a category_full grid for the row', () => {
   });
 });
 
-test('component.create shows the prompt row + curated when there are no likes', () => {
-  const mock = makeMock(); // no favorites
+test('component.create with no signals shows curated rows (recs omitted, Noty hinted)', () => {
+  const mock = makeMock();
   const api = loadPlugin(mock);
   const comp = api._component({});
   comp.create();
   assert.ok(Array.isArray(comp._built));
-  assert.strictEqual(comp._built[0].title, 'Рекомендации для Вас');
-  assert.ok(comp._built[0].results[0].__prompt);
+  assert.strictEqual(comp._built[0].title, 'Корейские триллеры (сериалы)'); // no recs row
+  assert.ok(mock.calls.noty.length >= 1, 'cold-start hint shown');
   assert.ok(mock.calls.toggles >= 1);
 });
 

@@ -53,12 +53,11 @@ test('genuinely empty results show "nothing found", not an auth error', () => {
 
 // Partial failure: if some rows load, show content (do not error the whole page).
 test('partial failure still shows content when some rows load', () => {
+  var firstDiscover = true;
   const mock = makeMock({ responder: function (url) {
-    if (url.indexOf('discover/') >= 0) return { __error: 401 };
-    if (url.indexOf('recommendations') >= 0) {
-      var m = /\/(\d+)\/recommendations/.exec(url);
-      var base = m ? parseInt(m[1], 10) : 0;
-      return { results: [{ id: base + 1 }, { id: base + 2 }] };
+    if (url.indexOf('discover/') >= 0) {
+      if (firstDiscover) { firstDiscover = false; return { results: [{ id: 1001, name: 'thriller', media_type: 'tv' }], total_pages: 1 }; }
+      return { __error: 401 };
     }
     return { results: [] };
   } });
@@ -66,5 +65,5 @@ test('partial failure still shows content when some rows load', () => {
   const comp = api._component({});
   comp.create();
   assert.ok(Array.isArray(comp._built), 'content built despite discover failures');
-  assert.strictEqual(comp._built[0].title, 'Рекомендации для Вас');
+  assert.strictEqual(comp._built[0].title, 'Корейские триллеры (сериалы)');
 });
