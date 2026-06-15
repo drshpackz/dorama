@@ -62,13 +62,53 @@
     return out;
   }
 
+  var ICON =
+    '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+    '<path d="M3 5.5C3 4.4 3.9 3.5 5 3.5H19C20.1 3.5 21 4.4 21 5.5V18.5C21 19.6 20.1 20.5 19 20.5H5C3.9 20.5 3 19.6 3 18.5V5.5Z" stroke="currentColor" stroke-width="1.6"/>' +
+    '<path d="M10 9.5L15 12L10 14.5V9.5Z" fill="currentColor"/></svg>';
+
+  function openCatalog() {
+    Lampa.Activity.push({
+      url: '', title: 'Дорама', component: 'dorama',
+      source: 'tmdb', card_type: true, page: 1
+    });
+  }
+
+  function addMenuItem() {
+    var item = $(
+      '<li class="menu__item selector" data-action="dorama">' +
+      '<div class="menu__ico">' + ICON + '</div>' +
+      '<div class="menu__text">Дорама</div>' +
+      '</li>'
+    );
+    item.on('hover:enter', openCatalog);
+    $('.menu .menu__list').eq(0).append(item);
+  }
+
+  function componentDorama(object) {
+    return new Lampa.InteractionMain(object);
+  }
+
+  function start() {
+    if (window.dorama_plugin_ready) return; // guard against double init
+    window.dorama_plugin_ready = true;
+    Lampa.Component.add('dorama', componentDorama);
+    addMenuItem();
+  }
+
+  if (window.appready) start();
+  else Lampa.Listener.follow('app', function (e) { if (e.type === 'ready') start(); });
+
   // --- test export hook (inert in a browser: `module` is undefined there) ---
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
       buildRows: buildRows,
       ANCHORS: ANCHORS,
       pickAnchors: pickAnchors,
-      mergeRecommendations: mergeRecommendations
+      mergeRecommendations: mergeRecommendations,
+      _start: start,
+      _addMenuItem: addMenuItem,
+      _component: componentDorama
     };
   }
 })();
