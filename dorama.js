@@ -85,8 +85,98 @@
     $('.menu .menu__list').eq(0).append(item);
   }
 
+  // GET a TMDB path via Lampa, stamp media_type onto each result, return results
+  // (+ total_pages) through `done`. Network errors degrade to an empty list.
+  function fetchResults(network, path, mediaType, done) {
+    network.silent(Lampa.TMDB.api(path), function (json) {
+      var res = (json && json.results) ? json.results : [];
+      var i;
+      if (mediaType) for (i = 0; i < res.length; i++) {
+        if (res[i] && !res[i].media_type) res[i].media_type = mediaType;
+      }
+      done(res, (json && json.total_pages) || 1);
+    }, function () { done([], 1); });
+  }
+
+  // Assemble the whole catalog: recommendation row first, then curated rows.
+  // Sequential requests keep one Reguest instance safe on old WebViews.
+  function loadCatalog(network, onDone, onEmpty) {
+    var rows = buildRows();
+    var curated = [];
+    var i = 0;
+
+    function nextRow() {
+      if (i >= rows.length) { loadRecos(); return; }
+      var row = rows[i];
+      fetchResults(network, row.url, row.method, function (results, totalPages) {
+        if (results.length) curated.push({
+          title: row.title, results: results, url: row.url,
+          method: row.method, source: 'tmdb', total_pages: totalPages
+        });
+        i++; nextRow();
+      });
+    }
+
+    function loadRecos() {
+      var offset = Math.floor((window.dorama_reco_offset || 0)) % ANCHORS.length;
+      window.dorama_reco_offset = offset + 5; // rotate seeds across opens
+      var picked = pickAnchors(ANCHORS, 5, offset);
+      var anchorIds = [], lists = [], k = 0, p;
+      for (p = 0; p < picked.length; p++) anchorIds.push(picked[p].id);
+
+      function nextAnchor() {
+        if (k >= picked.length) { finish(); return; }
+        var a = picked[k];
+        fetchResults(network, a.type + '/' + a.id + '/recommendations', a.type, function (results) {
+          lists.push(results); k++; nextAnchor();
+        });
+      }
+      function finish() {
+        var merged = mergeRecommendations(lists, anchorIds, 40);
+        var out = [];
+        if (merged.length) out.push({ title: 'В духе «Паразитов»', results: merged, source: 'tmdb' });
+        var final = out.concat(curated);
+        if (final.length) onDone(final); else onEmpty();
+      }
+      nextAnchor();
+    }
+
+    nextRow();
+  }
+
   function componentDorama(object) {
-    return new Lampa.InteractionMain(object);
+    var comp = new Lampa.InteractionMain(object);
+    var network = new Lampa.Reguest();
+
+    comp.create = function () {
+      var self = this;
+      this.activity.loader(true);
+      loadCatalog(network, function (data) {
+        self.build(data);
+        self.activity.loader(false);
+        self.activity.toggle();
+      }, function () {
+        self.activity.loader(false);
+        self.empty();
+      });
+      return this.render();
+    };
+
+    // Row "more" → open that row's full infinite-scroll grid (FR3 shape).
+    comp.onMore = function (row) {
+      Lampa.Activity.push({
+        url: row.url, title: row.title,
+        component: 'category_full', source: 'tmdb', card_type: true, page: 1
+      });
+    };
+
+    var inheritedDestroy = comp.destroy ? comp.destroy.bind(comp) : function () {};
+    comp.destroy = function () {
+      network.clear();
+      inheritedDestroy();
+    };
+
+    return comp;
   }
 
   function start() {
