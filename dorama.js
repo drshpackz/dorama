@@ -326,6 +326,59 @@
     nextRow();
   }
 
+  // Custom card for the «Рекомендации для Вас» row: a «Совпадение xx%» badge plus
+  // self-wired detail (hover:enter) and native like (hover:long). The framework
+  // instantiates it via item.params.createInstance (see recommendationsRow).
+  function PredictionCard(data) {
+    var card = data;
+
+    this.create = function () {
+      var html, self = this;
+      if (card.__prompt) {
+        html = '<div class="card selector card--dorama-prompt"><div class="card__view">' +
+               '<div class="card__promo-text" style="padding:1.2em;text-align:center">' + (card.title || '') + '</div>' +
+               '</div></div>';
+      } else {
+        var title = card.title || card.name || card.original_title || card.original_name || '';
+        var rating = card.vote_average ? (Math.round(card.vote_average * 10) / 10) : '';
+        var liked = (Lampa.Favorite && Lampa.Favorite.check && Lampa.Favorite.check(card).like) ? ' card--liked' : '';
+        html = '<div class="card selector card--dorama-match' + liked + '"><div class="card__view">' +
+               '<img class="card__img" src="" alt="" />' +
+               '<div class="card__match" style="position:absolute;left:0.5em;top:0.5em;background:rgba(0,0,0,0.75);color:#7ed957;padding:0.2em 0.5em;border-radius:0.4em;font-weight:600">Совпадение ' + (card.__match || 0) + '%</div>' +
+               (rating !== '' ? '<div class="card__vote">' + rating + '</div>' : '') +
+               '</div><div class="card__title">' + title + '</div></div>';
+      }
+      this.card = $(html);
+      this.card.on('hover:enter', function () { self.onEnterCard(); });
+      this.card.on('hover:long', function () { self.onLong(); });
+      if (!card.__prompt) this.image();
+    };
+
+    this.image = function () {
+      if (card.poster_path && Lampa.Api && Lampa.Api.img && this.card && this.card.find) {
+        var img = this.card.find('.card__img');
+        if (img && img.attr) img.attr('src', Lampa.Api.img(card.poster_path, 'w300'));
+      }
+    };
+
+    this.onEnterCard = function () {
+      if (card.__prompt) { if (Lampa.Noty) Lampa.Noty.show('Лайкните дораму (удержание OK), чтобы получить рекомендации'); return; }
+      Lampa.Activity.push({ component: 'full', id: card.id, method: card.media_type || 'movie', card: card, source: card.source || 'tmdb' });
+    };
+
+    this.onLong = function () {
+      if (card.__prompt) return;
+      var added = Lampa.Favorite.toggle('like', card);
+      if (Lampa.Noty) Lampa.Noty.show(added ? 'Добавлено в «Нравится»' : 'Убрано из «Нравится»');
+      if (this.card && this.card.toggleClass) this.card.toggleClass('card--liked', !!added);
+    };
+
+    this.visible = function () { this.image(); };
+    this.use = function () { /* benign: PredictionCard self-wires its events */ };
+    this.render = function (js) { return this.card; };
+    this.destroy = function () { if (this.card && this.card.remove) this.card.remove(); this.card = null; };
+  }
+
   function componentDorama(object) {
     var comp = new Lampa.InteractionMain(object);
     var network = new Lampa.Reguest();
@@ -409,6 +462,7 @@
       _tmdbUrl: tmdbUrl,
       _start: start,
       _addMenuItem: addMenuItem,
+      _PredictionCard: PredictionCard,
       _component: componentDorama
     };
   }
