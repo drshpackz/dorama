@@ -2485,21 +2485,6 @@ window.rch_nws[hostkey].Registry = function RchRegistry(client, startConnection)
       }
     });
 
-    // --- Display mode for the «Онлайн» button: standalone Activity (default) or
-    //     modal overlay over the movie card. See installOnlineModalMode(). ---
-    Lampa.SettingsApi.addParam({
-      component: 'z01_premium',
-      param: {
-        name: 'lampac_online_modal',
-        type: 'trigger',
-        default: false
-      },
-      field: {
-        name: 'Онлайн в модальном окне',
-        description: 'Открывать список источников/озвучек поверх карточки (overlay), не покидая карточку фильма'
-      }
-    });
-
     // ===== /Z01 PREMIUM =====
 
     Lampa.Template.add('lampac_css', "\n        <style>\n        @charset 'UTF-8';.online-prestige{position:relative;-webkit-border-radius:.3em;border-radius:.3em;background-color:rgba(0,0,0,0.3);display:-webkit-box;display:-webkit-flex;display:-moz-box;display:-ms-flexbox;display:flex}.online-prestige__body{padding:1.2em;line-height:1.3;-webkit-box-flex:1;-webkit-flex-grow:1;-moz-box-flex:1;-ms-flex-positive:1;flex-grow:1;position:relative}@media screen and (max-width:480px){.online-prestige__body{padding:.8em 1.2em}}.online-prestige__img{position:relative;width:13em;-webkit-flex-shrink:0;-ms-flex-negative:0;flex-shrink:0;min-height:8.2em}.online-prestige__img>img{position:absolute;top:0;left:0;width:100%;height:100%;-o-object-fit:cover;object-fit:cover;-webkit-border-radius:.3em;border-radius:.3em;opacity:0;-webkit-transition:opacity .3s;-o-transition:opacity .3s;-moz-transition:opacity .3s;transition:opacity .3s}.online-prestige__img--loaded>img{opacity:1}@media screen and (max-width:480px){.online-prestige__img{width:7em;min-height:6em}}.online-prestige__folder{padding:1em;-webkit-flex-shrink:0;-ms-flex-negative:0;flex-shrink:0}.online-prestige__folder>svg{width:4.4em !important;height:4.4em !important}.online-prestige__viewed{position:absolute;top:1em;left:1em;background:rgba(0,0,0,0.45);-webkit-border-radius:100%;border-radius:100%;padding:.25em;font-size:.76em}.online-prestige__viewed>svg{width:1.5em !important;height:1.5em !important}.online-prestige__episode-number{position:absolute;top:0;left:0;right:0;bottom:0;display:-webkit-box;display:-webkit-flex;display:-moz-box;display:-ms-flexbox;display:flex;-webkit-box-align:center;-webkit-align-items:center;-moz-box-align:center;-ms-flex-align:center;align-items:center;-webkit-box-pack:center;-webkit-justify-content:center;-moz-box-pack:center;-ms-flex-pack:center;justify-content:center;font-size:2em}.online-prestige__loader{position:absolute;top:50%;left:50%;width:2em;height:2em;margin-left:-1em;margin-top:-1em;background:url(./img/loader.svg) no-repeat center center;-webkit-background-size:contain;-o-background-size:contain;background-size:contain}.online-prestige__head,.online-prestige__footer{display:-webkit-box;display:-webkit-flex;display:-moz-box;display:-ms-flexbox;display:flex;-webkit-box-pack:justify;-webkit-justify-content:space-between;-moz-box-pack:justify;-ms-flex-pack:justify;justify-content:space-between;-webkit-box-align:center;-webkit-align-items:center;-moz-box-align:center;-ms-flex-align:center;align-items:center}.online-prestige__timeline{margin:.8em 0}.online-prestige__timeline>.time-line{display:block !important}.online-prestige__title{font-size:1.7em;overflow:hidden;-o-text-overflow:ellipsis;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:1;line-clamp:1;-webkit-box-orient:vertical}@media screen and (max-width:480px){.online-prestige__title{font-size:1.4em}}.online-prestige__time{padding-left:2em}.online-prestige__info{display:-webkit-box;display:-webkit-flex;display:-moz-box;display:-ms-flexbox;display:flex;-webkit-box-align:center;-webkit-align-items:center;-moz-box-align:center;-ms-flex-align:center;align-items:center}.online-prestige__info>*{overflow:hidden;-o-text-overflow:ellipsis;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:1;line-clamp:1;-webkit-box-orient:vertical}.online-prestige__quality{padding-left:1em;white-space:nowrap}.online-prestige__scan-file{position:absolute;bottom:0;left:0;right:0}.online-prestige__scan-file .broadcast__scan{margin:0}.online-prestige .online-prestige-split{font-size:.8em;margin:0 1em;-webkit-flex-shrink:0;-ms-flex-negative:0;flex-shrink:0}.online-prestige.focus::after{content:'';position:absolute;top:-0.6em;left:-0.6em;right:-0.6em;bottom:-0.6em;-webkit-border-radius:.7em;border-radius:.7em;border:solid .3em #fff;z-index:-1;pointer-events:none}.online-prestige+.online-prestige{margin-top:1.5em}.online-prestige--folder .online-prestige__footer{margin-top:.8em}.online-prestige-watched{padding:1em}.online-prestige-watched__icon>svg{width:1.5em;height:1.5em}.online-prestige-watched__body{padding-left:1em;padding-top:.1em;display:-webkit-box;display:-webkit-flex;display:-moz-box;display:-ms-flexbox;display:flex;-webkit-flex-wrap:wrap;-ms-flex-wrap:wrap;flex-wrap:wrap}.online-prestige-watched__body>span+span::before{content:' ● ';vertical-align:top;display:inline-block;margin:0 .5em}.online-prestige-rate{display:-webkit-inline-box;display:-webkit-inline-flex;display:-moz-inline-box;display:-ms-inline-flexbox;display:inline-flex;-webkit-box-align:center;-webkit-align-items:center;-moz-box-align:center;-ms-flex-align:center;align-items:center}.online-prestige-rate>svg{width:1.3em !important;height:1.3em !important}.online-prestige-rate>span{font-weight:600;font-size:1.1em;padding-left:.7em}.online-empty{line-height:1.4}.online-empty__title{font-size:1.8em;margin-bottom:.3em}.online-empty__time{font-size:1.2em;font-weight:300;margin-bottom:1.6em}.online-empty__buttons{display:-webkit-box;display:-webkit-flex;display:-moz-box;display:-ms-flexbox;display:flex}.online-empty__buttons>*+*{margin-left:1em}.online-empty__button{background:rgba(0,0,0,0.3);font-size:1.2em;padding:.5em 1.2em;-webkit-border-radius:.2em;border-radius:.2em;margin-bottom:2.4em}.online-empty__button.focus{background:#fff;color:black}.online-empty__templates .online-empty-template:nth-child(2){opacity:.5}.online-empty__templates .online-empty-template:nth-child(3){opacity:.2}.online-empty-template{background-color:rgba(255,255,255,0.3);padding:1em;display:-webkit-box;display:-webkit-flex;display:-moz-box;display:-ms-flexbox;display:flex;-webkit-box-align:center;-webkit-align-items:center;-moz-box-align:center;-ms-flex-align:center;align-items:center;-webkit-border-radius:.3em;border-radius:.3em}.online-empty-template>*{background:rgba(0,0,0,0.3);-webkit-border-radius:.3em;border-radius:.3em}.online-empty-template__ico{width:4em;height:4em;margin-right:2.4em}.online-empty-template__body{height:1.7em;width:70%}.online-empty-template+.online-empty-template{margin-top:1em}\n        </style>\n    ");
@@ -2516,117 +2501,6 @@ window.rch_nws[hostkey].Registry = function RchRegistry(client, startConnection)
     var button = "<div class=\"full-start__button selector view--online lampac--button\" data-subtitle=\"".concat(manifst.name, " ").concat(manifst.version, "\">\n        <svg width=\"128\" height=\"128\" viewBox=\"0 0 128 128\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><rect x=\"8\" y=\"8\" width=\"112\" height=\"112\" rx=\"32\" fill=\"white\" stroke=\"#2886fb\" stroke-width=\"12\"/><path d=\"M38 36h52L38 92h52\" stroke=\"#2886fb\" stroke-width=\"12\" stroke-linecap=\"round\" stroke-linejoin=\"round\" fill=\"none\"/></svg>\n\n        <span>#{title_online}</span>\n    </div>"); // нужна заглушка, а то при страте лампы говорит пусто
     Lampa.Component.add('lampac_z', component); //то же самое
     resetTemplates();
-
-    // ===== Online display mode: standalone (default) OR modal overlay =====
-    // When the 'lampac_online_modal' setting is ON, the «Онлайн» list (the same
-    // lampac_z component — balancers, filter, search, voices, player) is shown in
-    // a Lampa.Modal over the movie card instead of a full Activity. The card stays
-    // underneath; closing returns focus to it without reload. Component logic is
-    // untouched — only the host container changes. Any failure falls back to the
-    // original Activity behavior, so standalone mode is never affected.
-    (function installOnlineModalMode() {
-      if (window.lampac_modal_installed) return;
-      window.lampac_modal_installed = true;
-
-      var origPush = Lampa.Activity.push.bind(Lampa.Activity);
-      var origReplace = Lampa.Activity.replace ? Lampa.Activity.replace.bind(Lampa.Activity) : null;
-      var st = { active: false, comp: null, params: null, prev: 'full', $root: null, closed: true };
-
-      function modalOn() {
-        try { return Lampa.Storage.field('lampac_online_modal') === true && !!(Lampa.Modal && Lampa.Modal.open && Lampa.Modal.close && Lampa.Controller); }
-        catch (e) { return false; }
-      }
-      function merge(a, b) { var o = {}, k; if (a) for (k in a) if (a.hasOwnProperty(k)) o[k] = a[k]; if (b) for (k in b) if (b.hasOwnProperty(k)) o[k] = b[k]; return o; }
-
-      // «Онлайн» button → Activity.push({component:'lampac_z'})
-      Lampa.Activity.push = function (params) {
-        if (params && params.component === 'lampac_z' && modalOn()) {
-          if (openModal(params)) return;
-        }
-        return origPush(params);
-      };
-      // In-list re-search uses Activity.replace(...)
-      if (origReplace) Lampa.Activity.replace = function (params) {
-        if (st.active) { if (remount(params)) return; }
-        return origReplace(params);
-      };
-
-      // Build a lampac_z instance wired to run inside a modal (not an Activity).
-      function build(params) {
-        var comp = new component(params);
-        // The component only calls loader()/toggle() on this.activity. Visual
-        // loading is drawn by the component's own templates inside the scroll,
-        // so loader() is a no-op; toggle() refocuses the list controller.
-        var host = {
-          loader: function () {},
-          toggle: function () { if (st.active) Lampa.Controller.toggle('content'); },
-          render: function () { return comp.render ? comp.render() : $('<div>'); }
-        };
-        comp.activity = host;
-        comp.back = function () { close(); }; // Back inside the list closes the modal
-        // start() bails out unless it is the active Activity. Wrap it so
-        // Activity.active() transiently reports our host for the synchronous
-        // duration of each start() call (filter onBack re-calls start()).
-        var realStart = comp.start ? comp.start.bind(comp) : function () {};
-        comp.start = function () {
-          var oa = Lampa.Activity.active;
-          Lampa.Activity.active = function () { return { activity: host, component: 'lampac_z', card: params.movie }; };
-          try { return realStart(); } finally { Lampa.Activity.active = oa; }
-        };
-        return comp;
-      }
-
-      function openModal(params) {
-        try { st.prev = (Lampa.Controller.enabled() && Lampa.Controller.enabled().name) || 'full'; }
-        catch (e) { return false; }
-        st.params = params; st.active = true; st.closed = false;
-        var opened = false;
-        try {
-          var comp = build(params); st.comp = comp;
-          var body = comp.create ? comp.create() : comp.render(); // = files.render() (filter + list)
-          var $b = $(body); st.$root = $b;
-          Lampa.Modal.open({
-            title: (Lampa.Lang ? Lampa.Lang.translate('title_online') : 'Онлайн'),
-            size: 'large',
-            html: $b,
-            onBack: function () { close(); }
-          });
-          opened = true;
-          comp.start();                       // loads data + registers the 'content' controller (list navigation)
-          Lampa.Controller.toggle('content'); // focus the list inside the modal
-          return true;
-        } catch (e) {
-          if (opened) { try { close(); } catch (e2) {} return true; }
-          st.active = false; st.closed = true; st.comp = null;
-          return false; // fall back to the original Activity.push
-        }
-      }
-
-      function remount(patch) {
-        try {
-          var merged = merge(st.params, patch);
-          if (st.comp && st.comp.destroy) { try { st.comp.destroy(); } catch (e) {} }
-          st.params = merged;
-          var comp = build(merged); st.comp = comp;
-          var body = comp.create ? comp.create() : comp.render();
-          var $b = $(body);
-          if (st.$root) st.$root.replaceWith($b); // swap content inside the open modal
-          st.$root = $b;
-          comp.start();
-          Lampa.Controller.toggle('content');
-          return true;
-        } catch (e) { return false; }
-      }
-
-      function close() {
-        if (st.closed) return;
-        st.closed = true; st.active = false;
-        if (st.comp && st.comp.destroy) { try { st.comp.destroy(); } catch (e) {} }
-        st.comp = null;
-        try { Lampa.Modal.close(); } catch (e) {}
-        try { Lampa.Controller.toggle(st.prev || 'full'); } catch (e) {} // return focus to the card
-      }
-    })();
 
     function addButton(e) {
       if (e.render.find('.lampac--button').length) return;
