@@ -56,17 +56,6 @@
     return false;
   }
 
-  // Liked cards filtered to Asian dramas, capped at `limit`. Order is the caller's
-  // (Lampa.Favorite.get({type:'like'}) already returns most-recent-first).
-  function collectSeeds(liked, limit) {
-    var out = [], i;
-    liked = liked || [];
-    for (i = 0; i < liked.length && out.length < limit; i++) {
-      if (isAsianDrama(liked[i])) out.push(liked[i]);
-    }
-    return out;
-  }
-
   // TV vs movie for a stored favorite card (mirrors core recomend.js).
   function seedType(card) {
     return (card.number_of_seasons || card.first_air_date || card.name) ? 'tv' : 'movie';
@@ -251,10 +240,6 @@
     });
   }
 
-  function promptCard() {
-    return { __prompt: true, title: 'Лайкните дорамы, чтобы получить персональные рекомендации' };
-  }
-
   function favGet(type) {
     return (Lampa.Favorite && Lampa.Favorite.get) ? (Lampa.Favorite.get({ type: type }) || []) : [];
   }
@@ -266,12 +251,6 @@
       for (i = 0; i < list.length; i++) { if (list[i] && list[i].id != null) ids.push(list[i].id); }
     }
     return ids;
-  }
-
-  function likedSignature(liked) {
-    var s = '', i;
-    for (i = 0; i < liked.length; i++) { s += (liked[i].id || '') + ','; }
-    return s;
   }
 
   // Build the personalized row. done(row); row.results is [picks] or [] (cold/empty).
@@ -502,7 +481,6 @@
     module.exports = {
       buildRows: buildRows,
       mergeRecommendations: mergeRecommendations,
-      _collectSeeds: collectSeeds,
       _buildTasteProfile: buildTasteProfile,
       _scoreCandidate: scoreCandidate,
       _predictionPercent: predictionPercent,

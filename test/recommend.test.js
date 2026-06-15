@@ -5,19 +5,6 @@ const { makeMock, loadPlugin } = require('./helpers/lampa-mock');
 
 function load(fav) { return loadPlugin(makeMock(fav ? { favorites: fav } : undefined)); }
 
-test('collectSeeds keeps Asian-drama likes, most-recent-first, capped', () => {
-  const { _collectSeeds } = load();
-  const liked = [
-    { id: 1, original_language: 'ko' },
-    { id: 2, original_language: 'en' },          // dropped (not Asian)
-    { id: 3, origin_country: ['JP'] },           // kept via country
-    { id: 4, original_language: 'th' }
-  ];
-  const seeds = _collectSeeds(liked, 8);
-  assert.deepStrictEqual(seeds.map(s => s.id), [1, 3, 4]);
-  assert.strictEqual(_collectSeeds(liked, 1).length, 1); // cap respected
-});
-
 test('buildTasteProfile weights genres and finds the top language', () => {
   const { _buildTasteProfile } = load();
   const p = _buildTasteProfile([
