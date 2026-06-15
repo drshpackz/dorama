@@ -23,6 +23,82 @@
     ];
   }
 
+  // «Сейчас смотрят» + «Самые популярные» — placed right after the personal row.
+  // popularity.desc = what's hot now; vote_count.desc = the all-time top.
+  function popularRows() {
+    return [
+      { title: 'Сейчас смотрят', method: 'tv', source: 'tmdb',
+        url: 'discover/tv?with_original_language=ko&sort_by=popularity.desc&vote_count.gte=20' },
+      { title: 'Самые популярные: фильмы', method: 'movie', source: 'tmdb', depth: 2,
+        url: 'discover/movie?with_original_language=ko&sort_by=vote_count.desc&vote_count.gte=300' },
+      { title: 'Самые популярные: сериалы', method: 'tv', source: 'tmdb', depth: 2,
+        url: 'discover/tv?with_original_language=ko&sort_by=vote_count.desc&vote_count.gte=150' }
+    ];
+  }
+
+  // Newest-first rows. `now` is injectable so tests are deterministic; production
+  // passes nothing (real `new Date()`). today upper-bound drops future stubs; a
+  // 540-day floor keeps the row "new" without going empty; poster-gated.
+  function ymd(d) { return d.toISOString().slice(0, 10); }
+  function buildDynamicRows(now) {
+    now = now || new Date();
+    var lte = ymd(now), gte = ymd(new Date(now.getTime() - 540 * 24 * 3600 * 1000));
+    return [
+      { title: 'Корейские новинки: сериалы', method: 'tv', source: 'tmdb', depth: 2, posterRequired: true,
+        url: 'discover/tv?with_original_language=ko&first_air_date.lte=' + lte + '&first_air_date.gte=' + gte + '&sort_by=first_air_date.desc&vote_count.gte=3' },
+      { title: 'Корейские новинки: фильмы', method: 'movie', source: 'tmdb', depth: 2, posterRequired: true,
+        url: 'discover/movie?with_original_language=ko&primary_release_date.lte=' + lte + '&primary_release_date.gte=' + gte + '&sort_by=primary_release_date.desc&vote_count.gte=3' }
+    ];
+  }
+
+  // Extra catalog: user-requested thematic rows (keyword-narrowed, poster-gated,
+  // rotation off because pools are thin) + a broad all-genre catalog. ko-only.
+  // Thriller(53) is MOVIE-ONLY — never appears in a discover/tv url. History(36)
+  // is movie-only too, so the sageuk row is a movie row.
+  function buildExtraRows() {
+    return [
+      { title: 'Психологический хоррор (сериалы)', method: 'tv', source: 'tmdb', rotate: false, posterRequired: true,
+        url: 'discover/tv?with_original_language=ko&with_genres=10765|9648|18&with_keywords=12565&sort_by=popularity.desc&vote_count.gte=10' },
+      { title: 'Психологический хоррор (фильмы)', method: 'movie', source: 'tmdb', rotate: false, posterRequired: true,
+        url: 'discover/movie?with_original_language=ko&with_genres=27|53&with_keywords=12565&sort_by=popularity.desc&vote_count.gte=15' },
+      { title: 'Триллер-головоломка (сериалы)', method: 'tv', source: 'tmdb', rotate: false, posterRequired: true,
+        url: 'discover/tv?with_original_language=ko&with_genres=9648|10765&with_keywords=12565&sort_by=popularity.desc&vote_count.gte=10' },
+      { title: 'Триллер-головоломка: игра со зрителем', method: 'movie', source: 'tmdb', rotate: false, posterRequired: true,
+        url: 'discover/movie?with_original_language=ko&with_genres=53|9648&with_keywords=12565|9748&sort_by=vote_average.desc&vote_count.gte=80' },
+      { title: 'Романтические дорамы', method: 'tv', source: 'tmdb',
+        url: 'discover/tv?with_original_language=ko&with_genres=10749|10766&sort_by=popularity.desc&vote_count.gte=20' },
+      { title: 'Корейские комедии', method: 'tv', source: 'tmdb',
+        url: 'discover/tv?with_original_language=ko&with_genres=35&sort_by=popularity.desc&vote_count.gte=20' },
+      { title: 'Korean drama: драмы', method: 'tv', source: 'tmdb',
+        url: 'discover/tv?with_original_language=ko&with_genres=18&sort_by=popularity.desc&vote_count.gte=30' },
+      { title: 'Боевики и экшен', method: 'movie', source: 'tmdb',
+        url: 'discover/movie?with_original_language=ko&with_genres=28|12&sort_by=popularity.desc&vote_count.gte=30' },
+      { title: 'Исторические фильмы (сагык)', method: 'movie', source: 'tmdb',
+        url: 'discover/movie?with_original_language=ko&with_genres=36&sort_by=popularity.desc&vote_count.gte=10' },
+      { title: 'Фэнтези и мистика', method: 'tv', source: 'tmdb',
+        url: 'discover/tv?with_original_language=ko&with_genres=10765|9648&sort_by=popularity.desc&vote_count.gte=20' },
+      { title: 'Лучшее корейское кино', method: 'movie', source: 'tmdb', depth: 2,
+        url: 'discover/movie?with_original_language=ko&without_genres=99,10770&sort_by=vote_average.desc&vote_count.gte=300&vote_average.gte=7' },
+      { title: 'Лучшие корейские сериалы', method: 'tv', source: 'tmdb', depth: 2,
+        url: 'discover/tv?with_original_language=ko&without_genres=99,10763,10767&sort_by=vote_average.desc&vote_count.gte=100&vote_average.gte=7.5' }
+    ];
+  }
+
+  // Full catalog order: popular → newest → 7 curated (unchanged) → extra.
+  // The personal recommendations row is prepended later in loadHead.
+  function buildCatalogRows() {
+    return popularRows().concat(buildDynamicRows()).concat(buildRows()).concat(buildExtraRows());
+  }
+
+  // Per-open page rotation so the feed isn't identical every time. The same row
+  // shows a slightly different page each open (seed advances per open), and pages
+  // differ per category (hash of the row title). Pure + injectable for tests.
+  function rowHash(s) { var h = 0, i; s = s || ''; for (i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h; }
+  function rowPage(rowKey, seed, depth) {
+    depth = depth || 1; if (depth <= 1) return 1;
+    return 1 + ((rowHash(rowKey) + (seed || 0)) % depth);
+  }
+
   // Merge recommendation result arrays: dedupe by id, drop any id in `excludeIds`,
   // cap at `cap` items. Tolerates null/empty lists.
   function mergeRecommendations(lists, excludeIds, cap) {
@@ -83,7 +159,10 @@
     var langMatch = lang === profile.topLang ? 1 : (profile.langs[lang] ? 0.6 : (ASIAN_LANGS[lang] ? 0.3 : 0));
     var rating = Math.max(0, Math.min(10, c.vote_average || 0)) / 10;
     var votesConf = (c.vote_count || 0) >= 100 ? 1 : (c.vote_count || 0) / 100;
-    return 3.0 * co + 2.5 * over + 1.5 * langMatch + 1.5 * rating + 0.5 * votesConf;
+    // Taste-first: co-occurrence + genre overlap dominate (7.5 of the total);
+    // rating/votes are minor tie-breakers so popular-but-off-taste titles sink.
+    // Max ≈ 9.25, absorbed by the predictionPercent clamp (SCORE_MAX = 9.0).
+    return 4.0 * co + 3.5 * over + 1.0 * langMatch + 0.5 * rating + 0.25 * votesConf;
   }
 
   // Map a raw score to a 55..99% "match" band.
@@ -291,7 +370,11 @@
       for (i = 0; i < pool.length; i++) {
         c = pool[i];
         if (!c.poster_path) continue;
+        if (!isAsianDrama(c)) continue;                 // strict: drop non-Asian junk
         if (dislikeRank(dislikeSet, c.id) > 0) continue;
+        var ov = false, gg = c.genre_ids || [], q;       // strict: require genre overlap
+        for (q = 0; q < gg.length; q++) { if (profile.genreWeight[gg[q]]) { ov = true; break; } }
+        if (!ov) continue;
         sc = scoreCandidate(c, profile, coScore[c.id]);
         c.__score = sc; c.__match = predictionPercent(sc);
         scored.push(c);
@@ -360,29 +443,73 @@
     });
   }
 
-  // Assemble the catalog: build the dislike set first, fetch curated rows
-  // (de-prioritizing disliked look-alikes), then the personalized row first.
+  var ROW_CONCURRENCY = 4;
+
+  function compactRows(arr) { var out = [], i; for (i = 0; i < arr.length; i++) if (arr[i]) out.push(arr[i]); return out; }
+  function withPoster(list) { var out = [], i; for (i = 0; i < list.length; i++) if (list[i] && list[i].poster_path) out.push(list[i]); return out; }
+
+  // Per-open rotation seed: a counter that advances each catalog open (persisted
+  // in Storage), mixed with a hash of the user's signals so the rotation pattern
+  // also tracks their past ratings.
+  function rotationSeed() {
+    var seq = 0;
+    if (Lampa.Storage && Lampa.Storage.get) seq = parseInt(Lampa.Storage.get('dorama_open_seq', 0), 10) || 0;
+    if (Lampa.Storage && Lampa.Storage.set) Lampa.Storage.set('dorama_open_seq', seq + 1);
+    var sig = 0;
+    try { sig = rowHash(positiveSignature(collectSignals().positives)); } catch (e) {}
+    return (seq + sig) >>> 0;
+  }
+
+  // Fetch all rows with bounded concurrency, preserving catalog order (slot per
+  // index). Each row fetches its rotated preview page (rotation on unless
+  // row.rotate === false); an empty rotated page falls back to page 1 so thin
+  // rows never vanish. posterRequired rows drop poster-less cards. row.url is
+  // left untouched so "more" still opens the full grid from page 1.
+  function loadRowsConcurrent(network, rows, dislikeSet, seed, note, allDone) {
+    var slots = new Array(rows.length);
+    var launched = 0, finished = 0, n = rows.length, k;
+    if (!n) { allDone([]); return; }
+    function settle(idx, row, results, totalPages) {
+      if (row.posterRequired) results = withPoster(results);
+      slots[idx] = results.length
+        ? { title: row.title, results: reorderByDislike(results, dislikeSet), url: row.url, method: row.method, source: 'tmdb', total_pages: totalPages }
+        : null;
+      finished++;
+      if (finished >= n) { allDone(compactRows(slots)); return; }
+      launchNext();
+    }
+    function launchNext() {
+      if (launched >= n) return;
+      var idx = launched++, row = rows[idx];
+      var p = (row.rotate === false) ? 1 : rowPage(row.title, seed, row.depth || 3);
+      var url = p > 1 ? row.url + '&page=' + p : row.url;
+      fetchResults(network, url, row.method, function (results, totalPages, err) {
+        note(err);
+        if (!results.length && p > 1) {
+          fetchResults(network, row.url, row.method, function (r2, tp2, e2) { note(e2); settle(idx, row, r2, tp2); });
+        } else settle(idx, row, results, totalPages);
+      });
+    }
+    for (k = 0; k < ROW_CONCURRENCY && k < n; k++) launchNext();
+  }
+
+  // Assemble the catalog: build the dislike set first, fetch all rows
+  // concurrently (de-prioritizing disliked look-alikes), then prepend the
+  // personalized row.
   function loadCatalog(network, onDone, onFail) {
-    var rows = buildRows();
-    var curated = [];
-    var i = 0, errors = 0, lastStatus = 0;
+    var rows = buildCatalogRows();
+    var errors = 0, lastStatus = 0;
     var signals = collectSignals();
+    var seed = rotationSeed();
     function note(errStatus) { if (errStatus) { errors++; if (typeof errStatus === 'number' && errStatus > 0) lastStatus = errStatus; } }
 
     buildDislikeSet(network, signals.negatives, function (dislikeSet) {
-      function nextRow() {
-        if (i >= rows.length) { loadHead(dislikeSet); return; }
-        var row = rows[i];
-        fetchResults(network, row.url, row.method, function (results, totalPages, err) {
-          note(err);
-          if (results.length) curated.push({ title: row.title, results: reorderByDislike(results, dislikeSet), url: row.url, method: row.method, source: 'tmdb', total_pages: totalPages });
-          i++; nextRow();
-        });
-      }
-      nextRow();
+      loadRowsConcurrent(network, rows, dislikeSet, seed, note, function (curated) {
+        loadHead(dislikeSet, curated);
+      });
     });
 
-    function loadHead(dislikeSet) {
+    function loadHead(dislikeSet, curated) {
       loadRecommendations(network, dislikeSet, function (recRow) {
         if (recRow && recRow.__cold && !window.dorama_cold_noted) {
           window.dorama_cold_noted = true;
@@ -475,6 +602,11 @@
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
       buildRows: buildRows,
+      _popularRows: popularRows,
+      _buildExtraRows: buildExtraRows,
+      _buildDynamicRows: buildDynamicRows,
+      _buildCatalogRows: buildCatalogRows,
+      _rowPage: rowPage,
       mergeRecommendations: mergeRecommendations,
       _buildTasteProfile: buildTasteProfile,
       _scoreCandidate: scoreCandidate,

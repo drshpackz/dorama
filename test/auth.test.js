@@ -65,5 +65,5 @@ test('partial failure still shows content when some rows load', () => {
   const comp = api._component({});
   comp.create();
   assert.ok(Array.isArray(comp._built), 'content built despite discover failures');
-  assert.strictEqual(comp._built[0].title, 'Корейские триллеры (сериалы)');
+  assert.strictEqual(comp._built[0].title, 'Сейчас смотрят'); // first row to load (popular)
 });

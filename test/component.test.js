@@ -18,10 +18,10 @@ test('component.create puts «Рекомендации для Вас» first, th
   assert.ok(Array.isArray(built));
   assert.strictEqual(built[0].title, 'Рекомендации для Вас');
   assert.ok(built[0].personal);
-  assert.strictEqual(built[1].title, 'Корейские триллеры (сериалы)');
+  assert.strictEqual(built[1].title, 'Сейчас смотрят'); // popular row right after recs
   const reqs = mock.calls.requests.join('\n');
   assert.match(reqs, /\/recommendations/);                 // personalized seeds fetched
-  assert.match(reqs, /discover\/tv\?with_original_language=ko&with_genres=80\|9648/);
+  assert.match(reqs, /discover\/tv\?with_original_language=ko&with_genres=80\|9648/); // curated rows still fetched
 });
 
 test('component.onMore pushes a category_full grid for the row', () => {
@@ -43,7 +43,7 @@ test('component.create with no signals shows curated rows (recs omitted, Noty hi
   const comp = api._component({});
   comp.create();
   assert.ok(Array.isArray(comp._built));
-  assert.strictEqual(comp._built[0].title, 'Корейские триллеры (сериалы)'); // no recs row
+  assert.strictEqual(comp._built[0].title, 'Сейчас смотрят'); // no recs row; popular row leads
   assert.ok(mock.calls.noty.length >= 1, 'cold-start hint shown');
   assert.ok(mock.calls.toggles >= 1);
 });
