@@ -85,7 +85,19 @@
       { title: 'Лучшее корейское кино', method: 'movie', source: 'tmdb', depth: 2,
         url: 'discover/movie?with_original_language=ko&without_genres=99,10770&sort_by=vote_average.desc&vote_count.gte=300&vote_average.gte=7' },
       { title: 'Лучшие корейские сериалы', method: 'tv', source: 'tmdb', depth: 2,
-        url: 'discover/tv?with_original_language=ko&without_genres=99,10763,10767&sort_by=vote_average.desc&vote_count.gte=100&vote_average.gte=7.5' }
+        url: 'discover/tv?with_original_language=ko&without_genres=99,10763,10767&sort_by=vote_average.desc&vote_count.gte=100&vote_average.gte=7.5' },
+      // Networks / studios (verified TMDB ids). Reordered toward the top when the
+      // user's likes/reactions favour that network/studio (see orderCatalogRows).
+      { title: 'Дорамы tvN', method: 'tv', source: 'tmdb',
+        url: 'discover/tv?with_original_language=ko&with_networks=866&sort_by=popularity.desc&vote_count.gte=5' },
+      { title: 'Дорамы JTBC', method: 'tv', source: 'tmdb',
+        url: 'discover/tv?with_original_language=ko&with_networks=885&sort_by=popularity.desc&vote_count.gte=5' },
+      { title: 'Дорамы SBS', method: 'tv', source: 'tmdb',
+        url: 'discover/tv?with_original_language=ko&with_networks=156&sort_by=popularity.desc&vote_count.gte=5' },
+      { title: 'Netflix Корея', method: 'tv', source: 'tmdb',
+        url: 'discover/tv?with_original_language=ko&with_networks=213&sort_by=popularity.desc&vote_count.gte=5' },
+      { title: 'Большое корейское кино (студии)', method: 'movie', source: 'tmdb',
+        url: 'discover/movie?with_original_language=ko&with_companies=3491|7036|128404|7819|91505|20064&sort_by=popularity.desc&vote_count.gte=10' }
     ];
   }
 
@@ -115,6 +127,39 @@
   function rowPage(rowKey, seed, depth) {
     depth = depth || 1; if (depth <= 1) return 1;
     return 1 + ((rowHash(rowKey) + (seed || 0)) % depth);
+  }
+
+  // --- personalized catalog ordering (rows float toward the top by taste) ---
+  function rowFacetIds(url, facet) {
+    var m = new RegExp(facet + '=([^&]*)').exec(url);
+    if (!m) return [];
+    var parts = m[1].split(/[|,]/), out = [], i, v;
+    for (i = 0; i < parts.length; i++) { v = parseInt(parts[i], 10); if (v) out.push(v); }
+    return out;
+  }
+  // Affinity of a row to the taste profile: genre weight + bonuses for matching
+  // a favoured network / studio / keyword.
+  function rowAffinity(row, profile) {
+    var a = 0, ids, i;
+    ids = rowFacetIds(row.url, 'with_genres'); for (i = 0; i < ids.length; i++) a += profile.genreWeight[ids[i]] || 0;
+    ids = rowFacetIds(row.url, 'with_networks'); for (i = 0; i < ids.length; i++) if (profile.networkWeight[ids[i]]) a += 0.4;
+    ids = rowFacetIds(row.url, 'with_companies'); for (i = 0; i < ids.length; i++) if (profile.companyWeight[ids[i]]) a += 0.4;
+    ids = rowFacetIds(row.url, 'with_keywords'); for (i = 0; i < ids.length; i++) if (profile.keywordWeight[ids[i]]) a += 0.3;
+    return a;
+  }
+  function hasTaste(profile) {
+    function any(o) { var k; for (k in o) if (o.hasOwnProperty(k)) return true; return false; }
+    return !!profile && (any(profile.genreWeight) || any(profile.networkWeight) || any(profile.companyWeight) || any(profile.keywordWeight));
+  }
+  // Keep the first `pin` rows (popular + newest) fixed; sort the rest by taste
+  // affinity (stable for ties). No taste signals → original order untouched.
+  function orderCatalogRows(rows, profile, pin) {
+    if (!hasTaste(profile)) return rows;
+    var head = rows.slice(0, pin), tail = rows.slice(pin), ranked = [], i, out;
+    for (i = 0; i < tail.length; i++) ranked.push({ r: tail[i], a: rowAffinity(tail[i], profile), i: i });
+    ranked.sort(function (x, y) { return (y.a - x.a) || (x.i - y.i); });
+    out = head.slice(); for (i = 0; i < ranked.length; i++) out.push(ranked[i].r);
+    return out;
   }
 
   // Merge recommendation result arrays: dedupe by id, drop any id in `excludeIds`,
@@ -150,21 +195,40 @@
     return false;
   }
 
-  // Weighted genre/language profile. Seeds may be plain cards (weight 1) or
-  // {card, weight} objects.
+  // Top-N keys of a weight map (numbers), highest weight first.
+  function topKeys(map, n) {
+    var arr = [], k, i, out = [];
+    for (k in map) if (map.hasOwnProperty(k)) arr.push([k, map[k]]);
+    arr.sort(function (a, b) { return b[1] - a[1]; });
+    for (i = 0; i < arr.length && i < n; i++) out.push(parseInt(arr[i][0], 10));
+    return out;
+  }
+
+  // Weighted taste profile. Seeds may be plain cards (weight 1), {card, weight}
+  // objects, or enriched seeds carrying a `detail` ({genre_ids, networks,
+  // companies, keywords, original_language} from a TMDB detail call) — the detail
+  // backfills genres for reaction-only seeds and adds network/studio/keyword taste.
   function buildTasteProfile(seeds) {
-    var genreCount = {}, total = 0, langCount = {}, i, j, gids, g, ln, w, card;
+    var genreCount = {}, total = 0, langCount = {}, netCount = {}, compCount = {}, kwCount = {};
+    var i, j, gids, g, ln, w, card, det;
     for (i = 0; i < seeds.length; i++) {
-      card = seeds[i].card || seeds[i]; w = seeds[i].weight || seeds[i].__weight || 1;
-      if (!card) continue;
-      gids = card.genre_ids || [];
+      card = seeds[i].card || seeds[i]; w = seeds[i].weight || seeds[i].__weight || 1; det = seeds[i].detail;
+      gids = (card.genre_ids && card.genre_ids.length) ? card.genre_ids : (det && det.genre_ids ? det.genre_ids : []);
       for (j = 0; j < gids.length; j++) { g = gids[j]; genreCount[g] = (genreCount[g] || 0) + w; total += w; }
-      ln = card.original_language; if (ln) langCount[ln] = (langCount[ln] || 0) + w;
+      ln = card.original_language || (det && det.original_language) || null;
+      if (ln) langCount[ln] = (langCount[ln] || 0) + w;
+      if (det) {
+        for (j = 0; j < (det.networks || []).length; j++) netCount[det.networks[j]] = (netCount[det.networks[j]] || 0) + w;
+        for (j = 0; j < (det.companies || []).length; j++) compCount[det.companies[j]] = (compCount[det.companies[j]] || 0) + w;
+        for (j = 0; j < (det.keywords || []).length; j++) kwCount[det.keywords[j]] = (kwCount[det.keywords[j]] || 0) + w;
+      }
     }
     var genreWeight = {}, langs = {}, topLang = '', topN = -1, l;
     for (g in genreCount) { if (genreCount.hasOwnProperty(g)) genreWeight[g] = total ? genreCount[g] / total : 0; }
     for (l in langCount) { if (langCount.hasOwnProperty(l)) { langs[l] = true; if (langCount[l] > topN) { topN = langCount[l]; topLang = l; } } }
-    return { genreWeight: genreWeight, langs: langs, topLang: topLang };
+    return { genreWeight: genreWeight, langs: langs, topLang: topLang,
+      networkWeight: netCount, companyWeight: compCount, keywordWeight: kwCount,
+      topGenres: topKeys(genreCount, 3), topNetworks: topKeys(netCount, 2), topCompanies: topKeys(compCount, 2), topKeywords: topKeys(kwCount, 3) };
   }
 
   // Weighted content+collaborative score. `coScore` = sum of seed weights that surfaced this candidate.
@@ -300,7 +364,7 @@
 
   var RECS_TITLE = 'Рекомендации для Вас';
   var recsCache = { sig: '', row: null };
-  function setRecsDirty() { recsCache.sig = ''; recsCache.row = null; dislikeCache.sig = ''; dislikeCache.set = null; }
+  function setRecsDirty() { recsCache.sig = ''; recsCache.row = null; dislikeCache.sig = ''; dislikeCache.set = null; enrichCache.sig = ''; enrichCache.seeds = null; }
 
   function recommendationsRow(results, errored, cold) {
     return { title: RECS_TITLE, personal: true, results: results, source: 'tmdb', __errored: !!errored, __cold: !!cold };
@@ -345,6 +409,36 @@
     return ids;
   }
 
+  // Fetch a title's detail (+keywords) and distill the taste-relevant facets.
+  // done(detail) with {genre_ids, networks, companies, keywords, original_language}
+  // or done(null) on error. TV exposes keywords under .results, movies under .keywords.
+  function fetchDetail(network, media, id, done) {
+    function ids(a) { var o = [], i; a = a || []; for (i = 0; i < a.length; i++) if (a[i] && a[i].id != null) o.push(a[i].id); return o; }
+    network.silent(tmdbUrl(media + '/' + id + '?append_to_response=keywords'), function (d) {
+      d = d || {};
+      var kwObj = d.keywords || {}, kws = kwObj.results || kwObj.keywords || [];
+      done({ genre_ids: ids(d.genres), networks: ids(d.networks), companies: ids(d.production_companies), keywords: ids(kws), original_language: d.original_language });
+    }, function () { done(null); });
+  }
+
+  var enrichCache = { sig: '', seeds: null };
+
+  // Enrich positive seeds with detail facets (genres for reaction-only seeds,
+  // plus networks/studios/keywords for everyone). Sequential + bounded by the
+  // seed cap; cached by the positive signature.
+  function enrichSeeds(network, positives, done) {
+    var sig = positiveSignature(positives);
+    if (enrichCache.seeds && enrichCache.sig === sig) { done(enrichCache.seeds); return; }
+    var seeds = [], i;
+    for (i = 0; i < positives.length; i++) seeds.push({ id: positives[i].id, media: positives[i].media, weight: positives[i].weight, card: positives[i].card, detail: null });
+    var k = 0;
+    function step() {
+      if (k >= seeds.length) { enrichCache = { sig: sig, seeds: seeds }; done(seeds); return; }
+      fetchDetail(network, seeds[k].media, seeds[k].id, function (det) { seeds[k].detail = det; k++; step(); });
+    }
+    step();
+  }
+
   // Build the personalized row. done(row); row.results is [picks] or [] (cold/empty).
   // dislikeSet (or null) excludes disliked look-alikes.
   function loadRecommendations(network, dislikeSet, done) {
@@ -354,68 +448,98 @@
     if (recsCache.row && recsCache.sig === sig) { done(recsCache.row); return; }
     if (!positives.length) { emit(recommendationsRow([], false, true)); return; }
 
-    var profile = buildTasteProfile(positives);
-    var exclude = collectExcludeIds(), key, ei;
-    for (key in signals.ratedIds) if (signals.ratedIds.hasOwnProperty(key)) exclude.push(parseInt(key, 10));
-    for (ei = 0; ei < positives.length; ei++) exclude.push(positives[ei].id);
-    var coScore = {}, lists = [], errors = 0;
+    enrichSeeds(network, positives, function (enriched) {
+      var profile = buildTasteProfile(enriched);
+      var exclude = collectExcludeIds(), key, ei;
+      for (key in signals.ratedIds) if (signals.ratedIds.hasOwnProperty(key)) exclude.push(parseInt(key, 10));
+      for (ei = 0; ei < positives.length; ei++) exclude.push(positives[ei].id);
+      var coScore = {}, lists = [], errors = 0;
+      var medias = [], mseen = {}, mi, mm;
+      for (mi = 0; mi < enriched.length; mi++) { mm = enriched[mi].media; if (mm && !mseen[mm]) { mseen[mm] = true; medias.push(mm); } }
+      if (!medias.length) medias.push('tv');
 
-    function gather(path, weight, type, cb) {
-      fetchResults(network, path, type, function (results, totalPages, err) {
-        if (err) errors++;
-        var seen = {}, i, r;
-        for (i = 0; i < results.length; i++) { r = results[i]; if (!r || r.id == null) continue; if (!seen[r.id]) { seen[r.id] = true; coScore[r.id] = (coScore[r.id] || 0) + weight; } }
-        lists.push(results); cb();
-      });
-    }
-    function pass(endpoint, doneCb) {
-      var k = 0;
-      function step() {
-        if (k >= positives.length) { doneCb(); return; }
-        var s = positives[k];
-        gather(s.media + '/' + s.id + '/' + endpoint, s.weight, s.media, function () { k++; step(); });
+      function gather(path, weight, type, cb) {
+        fetchResults(network, path, type, function (results, totalPages, err) {
+          if (err) errors++;
+          var seen = {}, i, r;
+          for (i = 0; i < results.length; i++) { r = results[i]; if (!r || r.id == null) continue; if (!seen[r.id]) { seen[r.id] = true; coScore[r.id] = (coScore[r.id] || 0) + weight; } }
+          lists.push(results); cb();
+        });
       }
-      step();
-    }
-    pass('recommendations', function () {
-      var distinct = mergeRecommendations(lists, exclude, 100000).length;
-      if (distinct >= MIN_POOL) { finish(); return; }
-      pass('similar', finish);
-    });
-    function finish() {
-      var pool = mergeRecommendations(lists, exclude, 1000);
-      var hasGenreProfile = false, gk;
-      for (gk in profile.genreWeight) { if (profile.genreWeight.hasOwnProperty(gk)) { hasGenreProfile = true; break; } }
-      // Always Asian-only + not-disliked + poster. Genre overlap is required only
-      // when we actually have a genre profile (native likes carry genre_ids;
-      // reaction-only seeds may not). If the strict pass yields nothing, relax the
-      // genre requirement so the row never silently vanishes for an active user.
-      function collect(requireOverlap) {
-        var out = [], i, c, sc, ov, gg, q;
-        for (i = 0; i < pool.length; i++) {
-          c = pool[i];
-          if (!c.poster_path) continue;
-          if (!isAsianDrama(c)) continue;
-          if (dislikeRank(dislikeSet, c.id) > 0) continue;
-          if (currentBLBlock[c.id]) continue;             // hide BL/gay content
-          if (requireOverlap) {
-            ov = false; gg = c.genre_ids || [];
-            for (q = 0; q < gg.length; q++) { if (profile.genreWeight[gg[q]]) { ov = true; break; } }
-            if (!ov) continue;
-          }
-          sc = scoreCandidate(c, profile, coScore[c.id]);
-          c.__score = sc; c.__match = predictionPercent(sc);
-          out.push(c);
+      function passSeeds(endpoint, doneCb) {
+        var k = 0;
+        function step() {
+          if (k >= enriched.length) { doneCb(); return; }
+          var s = enriched[k];
+          gather(s.media + '/' + s.id + '/' + endpoint, s.weight, s.media, function () { k++; step(); });
         }
-        return out;
+        step();
       }
-      var scored = collect(hasGenreProfile);
-      if (!scored.length) scored = collect(false);
-      scored.sort(function (a, b) { return b.__score - a.__score; });
-      var top = scored.slice(0, 20);
-      if (!top.length) { emit(recommendationsRow([], errors > 0, false)); return; }
-      emit(recommendationsRow(top, false, false));
-    }
+      function runTasks(tasks, doneCb) {
+        var k = 0;
+        function step() {
+          if (k >= tasks.length) { doneCb(); return; }
+          gather(tasks[k].path, tasks[k].weight, tasks[k].type, function () { k++; step(); });
+        }
+        step();
+      }
+      // Taste-driven discover sources: candidates surfaced by the user's top
+      // genres / networks / studios / keywords feed coScore, so a title that
+      // matches several taste facets ranks high — collaborative + content blended.
+      function discoverPath(media, facet, list) {
+        return 'discover/' + media + '?with_original_language=ko&' + facet + '=' + list.join('|') +
+          '&without_keywords=' + BL_KEYWORDS + '&sort_by=popularity.desc&vote_count.gte=5';
+      }
+      function facetTasks() {
+        var tasks = [], i;
+        if (profile.topGenres.length) for (i = 0; i < medias.length; i++) tasks.push({ path: discoverPath(medias[i], 'with_genres', profile.topGenres), weight: 1.5, type: medias[i] });
+        if (profile.topNetworks.length) tasks.push({ path: discoverPath('tv', 'with_networks', profile.topNetworks), weight: 2.0, type: 'tv' });
+        if (profile.topCompanies.length) tasks.push({ path: discoverPath('movie', 'with_companies', profile.topCompanies), weight: 1.5, type: 'movie' });
+        if (profile.topKeywords.length) for (i = 0; i < medias.length; i++) tasks.push({ path: discoverPath(medias[i], 'with_keywords', profile.topKeywords), weight: 1.5, type: medias[i] });
+        return tasks;
+      }
+
+      passSeeds('recommendations', function () {
+        var distinct = mergeRecommendations(lists, exclude, 100000).length;
+        if (distinct >= MIN_POOL) { runTasks(facetTasks(), finish); return; }
+        passSeeds('similar', function () { runTasks(facetTasks(), finish); });
+      });
+
+      function finish() {
+        var pool = mergeRecommendations(lists, exclude, 1000);
+        var hasGenreProfile = false, gk;
+        for (gk in profile.genreWeight) { if (profile.genreWeight.hasOwnProperty(gk)) { hasGenreProfile = true; break; } }
+        // Always Asian-only + not-disliked + not-BL + poster. Genre overlap is
+        // required only when a genre profile exists; if the strict pass yields
+        // nothing, relax it so the row never silently vanishes for an active user.
+        function collect(requireOverlap) {
+          var out = [], i, c, sc, ov, gg, q;
+          for (i = 0; i < pool.length; i++) {
+            c = pool[i];
+            if (!c.poster_path) continue;
+            if (!isAsianDrama(c)) continue;
+            if (dislikeRank(dislikeSet, c.id) > 0) continue;
+            if (currentBLBlock[c.id]) continue;             // hide BL/gay content
+            if (requireOverlap) {
+              ov = false; gg = c.genre_ids || [];
+              for (q = 0; q < gg.length; q++) { if (profile.genreWeight[gg[q]]) { ov = true; break; } }
+              if (!ov) continue;
+            }
+            sc = scoreCandidate(c, profile, coScore[c.id]);
+            c.__score = sc; c.__match = predictionPercent(sc);
+            out.push(c);
+          }
+          return out;
+        }
+        var scored = collect(hasGenreProfile);
+        if (!scored.length) scored = collect(false);
+        scored.sort(function (a, b) { return b.__score - a.__score; });
+        var top = scored.slice(0, 20);
+        if (!top.length) { emit(recommendationsRow([], errors > 0, false)); return; }
+        emit(recommendationsRow(top, false, false));
+      }
+    });
+
     function emit(row) { recsCache = { sig: sig, row: row }; done(row); }
   }
 
@@ -554,18 +678,23 @@
   // concurrently (de-prioritizing disliked look-alikes), then prepend the
   // personalized row.
   function loadCatalog(network, onDone, onFail) {
-    var rows = buildCatalogRows();
+    var baseRows = buildCatalogRows();
     var errors = 0, lastStatus = 0;
     var signals = collectSignals();
     var seed = rotationSeed();
+    var pin = popularRows().length + buildDynamicRows().length; // popular + newest stay on top
     function note(errStatus) { if (errStatus) { errors++; if (typeof errStatus === 'number' && errStatus > 0) lastStatus = errStatus; } }
 
-    buildDislikeSet(network, signals.negatives, function (dislikeSet) {
-      loadRowsConcurrent(network, rows, dislikeSet, seed, note, function (curated) {
-        // BL block is only needed by the recommendations row, so skip it cold.
-        if (signals.positives.length) {
-          buildBLBlock(network, function (block) { currentBLBlock = block; loadHead(dislikeSet, curated); });
-        } else loadHead(dislikeSet, curated);
+    // Enrich seeds once → taste profile drives both the row order and the recs.
+    enrichSeeds(network, signals.positives, function (enriched) {
+      var rows = orderCatalogRows(baseRows, buildTasteProfile(enriched), pin);
+      buildDislikeSet(network, signals.negatives, function (dislikeSet) {
+        loadRowsConcurrent(network, rows, dislikeSet, seed, note, function (curated) {
+          // BL block is only needed by the recommendations row, so skip it cold.
+          if (signals.positives.length) {
+            buildBLBlock(network, function (block) { currentBLBlock = block; loadHead(dislikeSet, curated); });
+          } else loadHead(dislikeSet, curated);
+        });
       });
     });
 
@@ -667,6 +796,8 @@
       _buildDynamicRows: buildDynamicRows,
       _buildCatalogRows: buildCatalogRows,
       _rowPage: rowPage,
+      _rowAffinity: rowAffinity,
+      _orderCatalogRows: orderCatalogRows,
       mergeRecommendations: mergeRecommendations,
       _buildTasteProfile: buildTasteProfile,
       _scoreCandidate: scoreCandidate,
