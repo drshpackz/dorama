@@ -35,4 +35,5 @@ test('PredictionCard prompt mode shows text and does not open detail', () => {
   const before = mock.calls.activityPush.length;
   card.render(true).trigger('hover:enter');
   assert.strictEqual(mock.calls.activityPush.length, before);
+  assert.ok(mock.calls.noty.length >= 1, 'prompt enter shows a hint Noty');
 });

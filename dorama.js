@@ -326,6 +326,12 @@
     nextRow();
   }
 
+  // Escape user/TMDB text before injecting into a concatenated HTML string.
+  function escHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
   // Custom card for the «Рекомендации для Вас» row: a «Совпадение xx%» badge plus
   // self-wired detail (hover:enter) and native like (hover:long). The framework
   // instantiates it via item.params.createInstance (see recommendationsRow).
@@ -346,7 +352,7 @@
                '<img class="card__img" src="" alt="" />' +
                '<div class="card__match" style="position:absolute;left:0.5em;top:0.5em;background:rgba(0,0,0,0.75);color:#7ed957;padding:0.2em 0.5em;border-radius:0.4em;font-weight:600">Совпадение ' + (card.__match || 0) + '%</div>' +
                (rating !== '' ? '<div class="card__vote">' + rating + '</div>' : '') +
-               '</div><div class="card__title">' + title + '</div></div>';
+               '</div><div class="card__title">' + escHtml(title) + '</div></div>';
       }
       this.card = $(html);
       this.card.on('hover:enter', function () { self.onEnterCard(); });
@@ -368,6 +374,7 @@
 
     this.onLong = function () {
       if (card.__prompt) return;
+      if (!Lampa.Favorite || !Lampa.Favorite.toggle) return;
       var added = Lampa.Favorite.toggle('like', card);
       if (Lampa.Noty) Lampa.Noty.show(added ? 'Добавлено в «Нравится»' : 'Убрано из «Нравится»');
       if (this.card && this.card.toggleClass) this.card.toggleClass('card--liked', !!added);
