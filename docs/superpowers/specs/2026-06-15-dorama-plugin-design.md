@@ -171,11 +171,28 @@ dropped** and must not be reintroduced:
 - *Лучшее with bare `vote_average.desc`* → diluted/sort-trap; row 8 adds
   `without_genres=99,10770` and `vote_average.gte=7`.
 
-## 8. Error handling
+## 8. TMDB authentication & error handling
 
-- A row whose request fails or returns empty is **skipped** — no crash, no empty
-  row. If **all** rows fail, call `this.empty()` (native "nothing found").
-- The recommendation feed tolerates per-anchor failures (counter pattern).
+**Authentication (critical):** `Lampa.TMDB.api(path)` only builds the host and
+applies the `proxy_tmdb` setting — it does **not** append `api_key`. Requests must
+append `api_key=Lampa.TMDB.key()` **and** `language=Storage.field('tmdb_lang')` to
+the path *before* calling `Lampa.TMDB.api()`, exactly like Lampa's own `tmdb`
+source. Skipping this yields HTTP **401** on every call. A `tmdbUrl(path)` helper
+centralises this (and is idempotent — it won't double-append).
+
+**Error vs. empty:** `fetchResults` reports an error status (`null` on success,
+else the HTTP status such as `401`) so callers distinguish a hard failure from a
+genuinely-empty `200`. A row that errors or is empty is skipped (no crash, no
+blank row). The recommendation feed tolerates per-anchor failures.
+
+**No silent hang:** Lampa has no `this.empty(msg)` helper, and relying on a bare
+`empty()` can leave the loader spinning. When **no** row produced content the
+component renders a `Lampa.Empty` with a clear message — a 401 shows
+"TMDB: ошибка авторизации (401)…", other failures a generic error, and a true
+empty shows "Ничего не найдено" — then **always** calls `activity.loader(false)`
+and `activity.toggle()` so the spinner can never persist. Requests use a 15s
+timeout (`network.timeout`).
+
 - `destroy()` clears in-flight requests (`new Lampa.Reguest().clear()`) and
   destroys the scroll, per the native lifecycle
   (`create / start / pause / stop / render / destroy`).
