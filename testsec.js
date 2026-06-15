@@ -44,9 +44,9 @@
   function yn(v) { return v ? 'yes' : 'no'; }
 
   function showReport(title, lines) {
-    var box = $('<div style="padding:1.5em;line-height:1.5;text-align:left;max-width:44em;"></div>');
-    box.append('<div style="font-size:1.4em;margin-bottom:.5em;color:#e74c3c;">' + title + '</div>');
-    var pre = $('<pre style="white-space:pre-wrap;font-size:1.02em;opacity:.95;"></pre>');
+    var box = $('<div style="padding:1.2em;line-height:1.45;text-align:left;max-width:44em;"></div>');
+    box.append('<div style="font-size:1.3em;margin-bottom:.5em;color:#e74c3c;">' + title + '</div>');
+    var pre = $('<pre style="white-space:pre-wrap;word-break:break-word;font-size:0.92em;opacity:.95;"></pre>');
     pre.text(lines.join('\n'));            // .text() => no HTML injection from server output
     box.append(pre);
     Lampa.Modal.open({
@@ -117,42 +117,83 @@
     var clientPremium = !!key && validExp;
     var ru = isRuUser();
 
-    // Lampa-core premium (which gates the start ads) — probed defensively; this is
-    // SEPARATE from zpremkey, so Z01 premium does not remove Lampa-core ads.
-    var lampaPrem = 'n/a (Lampa-core, not this plugin)';
+    // Lampa-core premium gates the start ads — SEPARATE from zpremkey, so Z01
+    // premium never removes Lampa-core ads. Probed defensively.
+    var ads = 'Lampa-core gated';
     try {
       if (window.Lampa && Lampa.Account && typeof Lampa.Account.hasPremium === 'function') {
-        lampaPrem = yn(Lampa.Account.hasPremium());
+        ads = Lampa.Account.hasPremium() ? 'hidden (Lampa prem)' : 'shown (free)';
       }
     } catch (e) {}
 
-    out.push('STORAGE (the entire gate state lives here):');
-    out.push('  account_email    : ' + (email || '(none)') + '   logged-in: ' + yn(!!email));
-    out.push('  zpremkey         : ' + (key ? 'present (len ' + key.length + ')' : '(none)'));
-    out.push('  zprem_expires    : ' + (exp || '(none)') + '   valid: ' + yn(validExp));
-    out.push('  zprem_trial_used : ' + (used || '(none)'));
-    out.push('  online_url       : ' + (purl || '(none)'));
+    // short, one-fact-per-line layout so it fits a phone / TV screen
+    out.push('STORAGE (= the whole gate):');
+    out.push(' email: ' + (email || '(none)'));
+    out.push('   logged-in: ' + yn(!!email));
+    out.push(' zpremkey: ' + (key ? 'len ' + key.length : '(none)'));
+    out.push(' expires: ' + (exp || '(none)'));
+    out.push('   valid: ' + yn(validExp));
+    out.push(' trial_used: ' + (used || '(none)'));
+    out.push(' online_url: ' + (purl || '(none)'));
     out.push('');
-    out.push('DERIVED UI STATE:');
-    out.push('  client thinks premium : ' + yn(clientPremium));
-    out.push('  isRuUser (language)   : ' + yn(ru));
-    out.push('  VIP teasers shown     : ' + yn(ru && !key) +
-             (ru && !key ? '  (Filmix/HDRezka/KinoPub/Alloha 4K VIP' + (used ? '' : ' [demo]') + ')' : ''));
-    out.push('  pick VIP without key  : locked -> ' + (email ? 'buy/trial dialog' : '"Укажите email в настройках"'));
-    out.push('  start ads (Lampa-core): premium=' + lampaPrem + '  (zpremkey does NOT affect this)');
+    out.push('UI STATE (derived):');
+    out.push(' client premium: ' + yn(clientPremium));
+    out.push(' ru user: ' + yn(ru));
+    out.push(' VIP teasers: ' + (ru && !key ? 'shown' + (used ? '' : ' [demo]') : 'hidden'));
+    if (ru && !key) out.push('   Filmix/HDRezka/KinoPub/Alloha');
+    out.push(' VIP w/o key: locked');
+    out.push('   -> ' + (email ? 'buy/trial dialog' : '"Укажите email"'));
+    out.push(' ads: ' + ads);
+    out.push('   (zpremkey has no effect)');
     out.push('');
     out.push('VERDICT:');
-    out.push('  Every gate above is read from Lampa.Storage on the client:');
-    out.push('   - set zpremkey + a future zprem_expires  => UI flips to "premium"');
-    out.push('     (VIP unlocks, teasers hidden, buy/trial prompts gone).');
-    out.push('   - a REAL key (farmed/disclosed) also plays streams, because the');
-    out.push('     stream server validates X-Zprem-Key.');
-    out.push('   - a FAKE key unlocks only the look; streams fail server-side.');
-    out.push('   - ADS are gated by Lampa-core, not zpremkey, so a Z01 subscriber');
-    out.push('     still sees them (product gap, separate from this plugin).');
-    out.push('  => UI gating is cosmetic. Real enforcement must be server-side.');
+    out.push(' All gates = Lampa.Storage');
+    out.push(' (client-side only):');
+    out.push(' - set zpremkey + future');
+    out.push('   expires => UI "premium"');
+    out.push(' - REAL key also plays');
+    out.push('   streams (server checks');
+    out.push('   X-Zprem-Key)');
+    out.push(' - FAKE key = look only;');
+    out.push('   streams fail server-side');
+    out.push(' - ads = Lampa-core, not');
+    out.push('   zpremkey (product gap)');
+    out.push(' => UI gating is cosmetic.');
+    out.push('    Enforce server-side.');
 
     showReport('TestSec — client gate audit', out);
+  }
+
+  // ---- UI-state simulator (for testing the premium UX) ---------------------
+  // Snapshots your real storage on first use; "Restore" puts it all back.
+  // "Premium look" sets a DUMMY key => UI flips to premium but streams will NOT
+  // play (the stream server validates the key). That is correct for UI testing.
+  var BK = 'testsec_backup';
+  var SIM_KEYS = ['account_email', 'zpremkey', 'zprem_expires', 'zprem_trial_used', 'online_url'];
+
+  function snapshot() {
+    if (Lampa.Storage.get(BK, '')) return;           // keep the first (real) snapshot
+    var snap = {}, i;
+    for (i = 0; i < SIM_KEYS.length; i++) snap[SIM_KEYS[i]] = Lampa.Storage.get(SIM_KEYS[i], '');
+    Lampa.Storage.set(BK, snap);
+  }
+  function applyState(map, note) {
+    snapshot();
+    var k;
+    for (k in map) if (map.hasOwnProperty(k)) Lampa.Storage.set(k, map[k]);
+    Lampa.Noty.show('TestSec: ' + note + ' — reloading...');
+    setTimeout(function () { location.reload(); }, 1200);
+  }
+  function simFree()     { applyState({ account_email: '', zpremkey: '', zprem_expires: '', zprem_trial_used: '', online_url: '' }, 'Free / logged out'); }
+  function simNoSub()    { applyState({ account_email: 'uitest@example.com', zpremkey: '', zprem_expires: '', zprem_trial_used: '' }, 'Logged-in, no subscription'); }
+  function simPremiumUI(){ applyState({ zpremkey: 'DEMO-ui-only', zprem_expires: '2030-01-01' }, 'Premium look (UI only, no real streams)'); }
+  function simRestore() {
+    var snap = Lampa.Storage.get(BK, ''), i;
+    if (!snap) { Lampa.Noty.show('TestSec: nothing to restore'); return; }
+    for (i = 0; i < SIM_KEYS.length; i++) Lampa.Storage.set(SIM_KEYS[i], snap[SIM_KEYS[i]] || '');
+    Lampa.Storage.set(BK, '');
+    Lampa.Noty.show('TestSec: restored your real state — reloading...');
+    setTimeout(function () { location.reload(); }, 1200);
   }
 
   // ---- menu ----------------------------------------------------------------
@@ -176,6 +217,32 @@
       param: { name: 'testsec_audit', type: 'button' },
       field: { name: 'Audit client-side gates', description: 'Read-only: VIP locks, ads, "Укажите email" — shows they are all localStorage.' },
       onChange: auditClientGates
+    });
+
+    // --- UI-state simulator (snapshots real state; use Restore to revert) ---
+    Lampa.SettingsApi.addParam({
+      component: 'testsec',
+      param: { name: 'testsec_sim_free', type: 'button' },
+      field: { name: 'Sim: Free / logged out', description: 'Clear email + key. VIP teasers locked, "Укажите email" on select.' },
+      onChange: simFree
+    });
+    Lampa.SettingsApi.addParam({
+      component: 'testsec',
+      param: { name: 'testsec_sim_nosub', type: 'button' },
+      field: { name: 'Sim: Logged-in, no subscription', description: 'Email set, no key. VIP select shows the buy / 48h-trial dialog.' },
+      onChange: simNoSub
+    });
+    Lampa.SettingsApi.addParam({
+      component: 'testsec',
+      param: { name: 'testsec_sim_premium', type: 'button' },
+      field: { name: 'Sim: Premium look (UI only)', description: 'Dummy key => premium UI. Streams will NOT play (server-checked). For UI testing.' },
+      onChange: simPremiumUI
+    });
+    Lampa.SettingsApi.addParam({
+      component: 'testsec',
+      param: { name: 'testsec_sim_restore', type: 'button' },
+      field: { name: 'Restore my real state', description: 'Revert all simulated changes back to your real account/key.' },
+      onChange: simRestore
     });
   }
 
