@@ -78,6 +78,7 @@ function makeMock(options) {
     Activity: { push: function (o) { calls.activityPush.push(o); } },
     Component: { add: function (name, fn) { calls.componentAdd[name] = fn; } },
     InteractionMain: InteractionMain,
+    InteractionCategory: InteractionMain,
     Reguest: Reguest,
     // Real Lampa: api() only builds the host (+ proxy_tmdb); it does NOT append
     // api_key. key() is a function returning the public TMDB key.
@@ -144,4 +145,14 @@ function loadPlugin(mock) {
   return require(p); // returns the exported helpers object
 }
 
-module.exports = { makeMock: makeMock, loadPlugin: loadPlugin, makeEl: makeEl };
+// Load an arbitrary plugin file (e.g. 'anime-collections.js') fresh with the mock globals.
+function loadPluginFile(mock, filename) {
+  global.Lampa = mock.Lampa;
+  global.$ = mock.$;
+  global.window = mock.Lampa.appready ? { appready: true } : { appready: false };
+  var p = path.resolve(__dirname, '..', '..', filename);
+  delete require.cache[require.resolve(p)];
+  return require(p);
+}
+
+module.exports = { makeMock: makeMock, loadPlugin: loadPlugin, loadPluginFile: loadPluginFile, makeEl: makeEl };
