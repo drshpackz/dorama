@@ -22,8 +22,70 @@
         ru: 'Не удалось отправить на устройство',
         en: 'Could not send to device',
         uk: 'Не вдалося надіслати на пристрій'
+      },
+      playontv_rename: {
+        ru: 'Переименовать это устройство',
+        en: 'Rename this device',
+        uk: 'Перейменувати цей пристрій'
       }
     });
+  }
+
+  function deviceName() {
+    var n = '';
+    try { n = Lampa.Storage.field('device_name'); } catch (e) {}
+    // field() returns the STRING 'undefined' for unset keys — treat as unset.
+    if (!n || n === 'undefined') n = 'Lampa';
+    return n;
+  }
+
+  function saveDeviceName(value) {
+    var v = typeof value === 'string' ? value.replace(/^\s+|\s+$/g, '') : '';
+    if (!v) return false;
+    Lampa.Storage.set('device_name', v);
+    return true;
+  }
+
+  function renameRowHtml() {
+    // Reuses the native broadcast__device class so focus styling matches the
+    // device rows; the marker class keeps injection idempotent.
+    return '<div class="broadcast__device selector broadcast-rename--plugin" style="display:flex;align-items:center;opacity:0.85">' +
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0;margin-right:0.7em">' +
+      '<path d="M17 3l4 4L8 20l-5 1 1-5L17 3z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" fill="none"/>' +
+      '</svg>' +
+      '<span>' + Lampa.Lang.translate('playontv_rename') + ': ' + deviceName() + '</span>' +
+      '</div>';
+  }
+
+  // Add a «✎ rename» row to the native Broadcast picker. The row lives OUTSIDE
+  // .broadcast__devices, which the picker empties and refills every ~3s.
+  function injectRenameRow() {
+    if (!(Lampa.Input && typeof Lampa.Input.edit === 'function')) return;
+    setTimeout(function () {
+      try {
+        var root = $('.broadcast');
+        if (!root.length || root.find('.broadcast-rename--plugin').length) return;
+        var row = $(renameRowHtml());
+        row.on('hover:enter', function () {
+          Lampa.Input.edit({
+            title: Lampa.Lang.translate('playontv_rename'),
+            value: deviceName(),
+            free: true,
+            nosave: true
+          }, function (new_value) {
+            if (saveDeviceName(new_value)) {
+              row.find('span').text(Lampa.Lang.translate('playontv_rename') + ': ' + deviceName());
+            }
+            // Return focus to the picker modal after the keyboard closes.
+            try { Lampa.Controller.toggle('modal'); } catch (e) {}
+          });
+        });
+        root.append(row);
+        // Re-collect the modal's focusables so the new row is navigable now,
+        // not only after the next devices poll.
+        try { Lampa.Controller.toggle('modal'); } catch (e) {}
+      } catch (e) {}
+    }, 100);
   }
 
   function makeButtonHtml() {
@@ -85,6 +147,7 @@
     btn.on('hover:enter', function () {
       try {
         Lampa.Broadcast.open({ type: 'card', object: buildCardObject(movie) });
+        injectRenameRow();
       } catch (e) {
         Lampa.Noty.show(Lampa.Lang.translate('playontv_error'));
       }
@@ -124,7 +187,10 @@
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
       _addButton: addButton,
-      _makeButtonHtml: makeButtonHtml
+      _makeButtonHtml: makeButtonHtml,
+      _deviceName: deviceName,
+      _saveDeviceName: saveDeviceName,
+      _renameRowHtml: renameRowHtml
     };
   }
 })();

@@ -139,6 +139,37 @@ test('falls back to legacy Account.logged() when Permit is unavailable', () => {
   assert.strictEqual(render2._inserted.length, 1, 'legacy logged()=true shows the button');
 });
 
+test('deviceName(): falls back to "Lampa" for the truthy "undefined" string, uses stored value otherwise', () => {
+  const bare = makeMock();
+  const api1 = loadPluginFile(bare, 'broadcast.js');
+  assert.strictEqual(api1._deviceName(), 'Lampa', 'field() returns "undefined" string for unset key');
+
+  const named = makeMock({ storage: { device_name: 'Гостиная TV' } });
+  const api2 = loadPluginFile(named, 'broadcast.js');
+  assert.strictEqual(api2._deviceName(), 'Гостиная TV');
+});
+
+test('saveDeviceName(): trims and stores non-empty names, rejects empty/blank', () => {
+  const mock = makeMock();
+  const api = loadPluginFile(mock, 'broadcast.js');
+  assert.strictEqual(api._saveDeviceName('  My iPhone  '), true);
+  assert.strictEqual(mock.Lampa.Storage.get('device_name'), 'My iPhone');
+  assert.strictEqual(api._saveDeviceName('   '), false, 'blank rejected');
+  assert.strictEqual(api._saveDeviceName(undefined), false, 'undefined rejected');
+  assert.strictEqual(mock.Lampa.Storage.get('device_name'), 'My iPhone', 'unchanged after rejects');
+});
+
+test('renameRowHtml(): native-styled selector row with pen icon and current name', () => {
+  const mock = makeMock({ storage: { device_name: 'Кухня' } });
+  const api = loadPluginFile(mock, 'broadcast.js');
+  const html = api._renameRowHtml();
+  assert.ok(html.indexOf('broadcast__device') >= 0, 'reuses native row class for focus styling');
+  assert.ok(html.indexOf('broadcast-rename--plugin') >= 0, 'has marker class for idempotent inject');
+  assert.ok(html.indexOf('selector') >= 0);
+  assert.ok(html.indexOf('<svg') >= 0, 'has pen icon');
+  assert.ok(html.indexOf('Кухня') >= 0, 'shows current device name');
+});
+
 test('Broadcast.open throwing shows a Noty and does not propagate', () => {
   const mock = makeMock({ broadcastThrow: true });
   loadPluginFile(mock, 'broadcast.js');
