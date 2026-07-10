@@ -40,10 +40,10 @@ guessing.
 
 ## Component
 
-Single new plugin file: **`playontv.js`** — a self-contained IIFE, matching the
-existing one-file-per-plugin convention (`dorama.js`, `online.js`,
-`anime-collections.js`). Guarded by a `window.playontv_plugin` flag so it
-initializes once.
+Single new plugin file: **`broadcast.js`** (module name "broadcast", per user
+request) — a self-contained IIFE, matching the existing one-file-per-plugin
+convention (`dorama.js`, `online.js`, `anime-collections.js`). Guarded by a
+`window.broadcast_plugin` flag so it initializes once.
 
 ### Integration point
 
@@ -110,26 +110,26 @@ user taps «На ТВ» → Lampa.Broadcast.open({type:'card', object: movie})
 
 Follow the existing `node --test` + `test/helpers/lampa-mock.js` convention.
 
-1. **Export internals for tests:** at the bottom of `playontv.js`, when
+1. **Export internals for tests:** at the bottom of `broadcast.js`, when
    `typeof module !== 'undefined' && module.exports`, export
    `{ _addButton, _makeButtonHtml }` (mirrors how `dorama.js` exposes `_…` hooks).
 2. **Extend `lampa-mock.js`** with a `Broadcast` stub that records `open(params)`
    calls, plus a way to toggle it absent (to test the feature-detect gate) and a
    `parental_control` storage field (to test the child-mode gate). The `'full'`
    listener path is already supported via `Listener.send('full', ev)`.
-3. **`test/playontv.test.js` cases:**
+3. **`test/broadcast.test.js` cases:**
    - Injects exactly one `.view--playtv` button on `full` complite; idempotent on repeat.
    - `hover:enter` calls `Broadcast.open` once with `{ type:'card', object: movie }`.
    - Button **not** injected when `Lampa.Broadcast` is absent.
    - Button **not** injected in child mode.
    - `open()` throwing triggers `Lampa.Noty.show` and does not throw out of the handler.
-4. **Live verification** (per repo norm of live-verified features): load `playontv.js`
+4. **Live verification** (per repo norm of live-verified features): load `broadcast.js`
    on two real Lampa devices on the same account/network, open a movie, tap «На ТВ»,
    confirm the TV opens that movie's detail page.
 
 ## Files touched
 
-- `playontv.js` — new plugin (~50–70 lines incl. template + lang).
+- `broadcast.js` — new plugin (~50–70 lines incl. template + lang).
 - `test/helpers/lampa-mock.js` — add `Broadcast` stub + child-mode field.
-- `test/playontv.test.js` — new test file.
+- `test/broadcast.test.js` — new test file.
 - `README.md` — add the plugin to the plugin list (short entry).
