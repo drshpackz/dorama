@@ -770,6 +770,57 @@
     return comp;
   }
 
+  // ======================= Shorts (CUB clip feed) =======================
+  // Public read-only Shots API (see docs/shots-research.md). lampa.mx is
+  // TLS-unreachable from some networks, so we talk to the CUB mirrors directly.
+  var SHOTS_MIRRORS = [
+    'https://cub.rip/api/shots/',
+    'https://cubnotrip.top/api/shots/'
+  ];
+
+  function shotsLentaUrl(base, query) {
+    var parts = [], keys = ['sort', 'page', 'id', 'limit'], i;
+    for (i = 0; i < keys.length; i++) {
+      if (query[keys[i]] !== undefined) parts.push(keys[i] + '=' + encodeURIComponent(query[keys[i]]));
+    }
+    return base + 'lenta?' + parts.join('&');
+  }
+
+  // done(results[]) on success (possibly empty), done(null) if BOTH mirrors fail.
+  function fetchLenta(network, query, done) {
+    function attempt(idx) {
+      if (idx >= SHOTS_MIRRORS.length) { done(null); return; }
+      network.silent(shotsLentaUrl(SHOTS_MIRRORS[idx], query), function (json) {
+        done((json && json.results) ? json.results : []);
+      }, function () {
+        attempt(idx + 1);
+      });
+    }
+    attempt(0);
+  }
+
+  function filterReadyShots(shots) {
+    var out = [], i;
+    for (i = 0; i < shots.length; i++) {
+      if (shots[i] && shots[i].status === 'ready' && shots[i].file) out.push(shots[i]);
+    }
+    return out;
+  }
+
+  function dedupeById(shots) {
+    var out = [], seen = {}, i;
+    for (i = 0; i < shots.length; i++) {
+      if (!seen[shots[i].id]) { seen[shots[i].id] = 1; out.push(shots[i]); }
+    }
+    return out;
+  }
+
+  function minShortId(shots) {
+    var min = shots[0].id, i;
+    for (i = 1; i < shots.length; i++) if (shots[i].id < min) min = shots[i].id;
+    return min;
+  }
+
   function start() {
     if (window.dorama_plugin_ready) return; // guard against double init
     window.dorama_plugin_ready = true;
@@ -812,7 +863,12 @@
       _start: start,
       _addMenuItem: addMenuItem,
       _registerMatchBadge: registerMatchBadge,
-      _component: componentDorama
+      _component: componentDorama,
+      _shotsLentaUrl: shotsLentaUrl,
+      _fetchLenta: fetchLenta,
+      _filterReadyShots: filterReadyShots,
+      _dedupeById: dedupeById,
+      _minShortId: minShortId
     };
   }
 })();
