@@ -17,7 +17,7 @@ function makeEl(html) {
 // --- mock factory: returns { Lampa, $, window, calls } ---
 function makeMock(options) {
   options = options || {};
-  var calls = { activityPush: [], componentAdd: {}, listeners: {}, requests: [], clears: 0, empties: [], loaderCalls: [], toggles: 0, favToggles: [], noty: [] };
+  var calls = { activityPush: [], componentAdd: {}, listeners: {}, requests: [], clears: 0, empties: [], loaderCalls: [], toggles: 0, favToggles: [], noty: [], broadcastOpen: [] };
 
   var menuList = makeEl('');               // the .menu .menu__list element
   function $(arg) {
@@ -93,7 +93,7 @@ function makeMock(options) {
       if (options.storage) for (var sk in options.storage) if (options.storage.hasOwnProperty(sk)) store[sk] = options.storage[sk];
       var changeFns = [];
       return {
-        field: function () { return 'ru'; },
+        field: function (k) { if (k in store) return store[k]; return k === 'tmdb_lang' ? 'ru' : undefined; },
         get: function (k, def) { return (k in store) ? store[k] : def; },
         set: function (k, v) { store[k] = v; for (var i = 0; i < changeFns.length; i++) changeFns[i]({ name: k, value: v }); },
         listener: { follow: function (name, fn) { if (name === 'change') changeFns.push(fn); }, send: function () {} }
@@ -107,6 +107,16 @@ function makeMock(options) {
     },
     Controller: { add: function () {}, toggle: function () {}, collectionSet: function () {}, collectionFocus: function () {} },
     Noty: { show: function (m) { calls.noty.push(m); } },
+    Lang: {
+      add: function () {},
+      translate: function (k) { return k; }
+    },
+    Broadcast: options.noBroadcast ? undefined : {
+      open: function (params) {
+        if (options.broadcastThrow) throw new Error('broadcast failed');
+        calls.broadcastOpen.push(params);
+      }
+    },
     Api: { img: function (path, size) { return 'IMG:' + (path || ''); } },
     Favorite: (function () {
       var store = options.favorites || { like: [], history: [], viewed: [] };
