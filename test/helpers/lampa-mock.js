@@ -124,8 +124,9 @@ function makeMock(options) {
       translate: function (k) { return k; }
     },
     // Models real Lampa: Account.Permit.child is the public child-profile signal
-    // (the same one native Broadcast's head icon checks).
-    Account: { Permit: { child: !!options.childProfile } },
+    // (the same one native Broadcast's head icon checks); Permit.access is the
+    // modern "logged in + account enabled" signal (Account.logged() is deprecated).
+    Account: { Permit: { child: !!options.childProfile, access: !options.notLogged } },
     Broadcast: options.noBroadcast ? undefined : {
       open: function (params) {
         if (options.broadcastThrow) throw new Error('broadcast failed');

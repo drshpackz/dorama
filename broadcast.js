@@ -65,9 +65,20 @@
     return !!(Lampa.Broadcast && typeof Lampa.Broadcast.open === 'function');
   }
 
+  function loggedIn() {
+    // Devices are discovered over the CUB account socket — without a logged-in
+    // account the picker is always empty, so hide the button entirely.
+    // Modern signal: Account.Permit.access; legacy fallback: Account.logged().
+    try {
+      if (Lampa.Account && Lampa.Account.Permit) return !!Lampa.Account.Permit.access;
+      if (Lampa.Account && typeof Lampa.Account.logged === 'function') return !!Lampa.Account.logged();
+    } catch (e) {}
+    return false;
+  }
+
   function addButton(render, movie) {
     if (!render || !render.find) return;
-    if (!canBroadcast() || childMode()) return;
+    if (!canBroadcast() || childMode() || !loggedIn()) return;
     if (render.find('.view--playtv').length) return;
 
     var btn = $(makeButtonHtml());

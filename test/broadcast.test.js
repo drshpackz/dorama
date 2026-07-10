@@ -117,6 +117,28 @@ test('button DOES render on a normal profile even though field() returns truthy 
   assert.strictEqual(render._inserted.length, 1);
 });
 
+test('no button when the account is not logged in (Permit.access false — no devices without CUB)', () => {
+  const mock = makeMock({ notLogged: true });
+  loadPluginFile(mock, 'broadcast.js');
+  const render = fakeRender({ online: true });
+  fire(mock, render, MOVIE);
+  assert.strictEqual(render._inserted.length, 0);
+});
+
+test('falls back to legacy Account.logged() when Permit is unavailable', () => {
+  const mock = makeMock();
+  mock.Lampa.Account = { logged: function () { return false; } }; // old build: no Permit
+  loadPluginFile(mock, 'broadcast.js');
+  const render = fakeRender({ online: true });
+  fire(mock, render, MOVIE);
+  assert.strictEqual(render._inserted.length, 0, 'legacy logged()=false hides the button');
+
+  mock.Lampa.Account = { logged: function () { return true; } };
+  const render2 = fakeRender({ online: true });
+  fire(mock, render2, MOVIE);
+  assert.strictEqual(render2._inserted.length, 1, 'legacy logged()=true shows the button');
+});
+
 test('Broadcast.open throwing shows a Noty and does not propagate', () => {
   const mock = makeMock({ broadcastThrow: true });
   loadPluginFile(mock, 'broadcast.js');

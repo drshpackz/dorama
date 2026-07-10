@@ -66,6 +66,10 @@ if (Lampa.Activity.active().component === 'full') { … }
      native Broadcast checks. (Live-verified correction: `Storage.field('parental_control')`
      is NOT a real Lampa key, and `field()` returns the truthy string `'undefined'`
      for unregistered keys, which hid the button on every real device.)
+   - Account logged in: `Lampa.Account.Permit.access` (legacy fallback
+     `Lampa.Account.logged()`, which is deprecated in current builds). Devices are
+     discovered over the CUB account socket, so without a login the picker is
+     always empty — hide the button instead.
 3. Build the button from an HTML template: `full-start__button selector view--playtv`
    with a TV/cast SVG icon and a localized `<span>` label.
 4. **Placement:** insert **after** the online button (`.view--online`) if present,
