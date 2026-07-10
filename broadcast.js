@@ -50,7 +50,9 @@
     // Reuses the native broadcast__device class so focus styling matches the
     // device rows; the marker class keeps injection idempotent.
     return '<div class="broadcast__device selector broadcast-rename--plugin" style="display:flex;align-items:center;opacity:0.85">' +
-      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0;margin-right:0.7em">' +
+      // Lampa's global CSS (svg{width:100%;height:100%}) overrides width/height
+      // ATTRIBUTES — the size must be an inline style to win.
+      '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:1em;height:1em;flex-shrink:0;margin-right:0.7em">' +
       '<path d="M17 3l4 4L8 20l-5 1 1-5L17 3z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" fill="none"/>' +
       '</svg>' +
       '<span>' + Lampa.Lang.translate('playontv_rename') + ': ' + deviceName() + '</span>' +

@@ -167,6 +167,11 @@ test('renameRowHtml(): native-styled selector row with pen icon and current name
   assert.ok(html.indexOf('broadcast-rename--plugin') >= 0, 'has marker class for idempotent inject');
   assert.ok(html.indexOf('selector') >= 0);
   assert.ok(html.indexOf('<svg') >= 0, 'has pen icon');
+  // Lampa's global CSS is `svg{width:100%;height:100%}` — it overrides svg
+  // width/height ATTRIBUTES, so the icon must be sized via inline style.
+  const svgTag = html.slice(html.indexOf('<svg'), html.indexOf('>', html.indexOf('<svg')));
+  assert.ok(/style="[^"]*width:\s*1em/.test(svgTag), 'svg width constrained via inline style');
+  assert.ok(/style="[^"]*height:\s*1em/.test(svgTag), 'svg height constrained via inline style');
   assert.ok(html.indexOf('Кухня') >= 0, 'shows current device name');
 });
 
