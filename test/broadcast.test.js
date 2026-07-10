@@ -59,14 +59,35 @@ test('falls back to .view--torrent, then to the buttons row', () => {
   assert.strictEqual(intoRow._inserted[0].where, 'row');
 });
 
-test('hover:enter calls Lampa.Broadcast.open with type card and the movie', () => {
-  const mock = makeMock();
+test('hover:enter sends the native activity object when Activity.active() is a full page', () => {
+  // Real Broadcast.open reads params.object.card.id — the object must be the
+  // activity object (what Activity.extractObject returns), never the raw movie.
+  const fullActivity = { component: 'full', id: MOVIE.id, method: 'movie', card: MOVIE, source: 'tmdb', activity: { render: function () {} } };
+  const mock = makeMock({ activeActivity: fullActivity });
   loadPluginFile(mock, 'broadcast.js');
   const render = fakeRender({ online: true });
   fire(mock, render, MOVIE);
   render._inserted[0].btn.trigger('hover:enter');
   assert.strictEqual(mock.calls.broadcastOpen.length, 1);
-  assert.deepStrictEqual(mock.calls.broadcastOpen[0], { type: 'card', object: MOVIE });
+  const sent = mock.calls.broadcastOpen[0];
+  assert.strictEqual(sent.type, 'card');
+  assert.deepStrictEqual(sent.object, { component: 'full', id: MOVIE.id, method: 'movie', card: MOVIE, source: 'tmdb' }, 'activity object with runtime keys stripped');
+});
+
+test('hover:enter falls back to a constructed full-activity object (with .card) when Activity.active() is unavailable', () => {
+  const mock = makeMock(); // no activeActivity → Activity.active() throws
+  loadPluginFile(mock, 'broadcast.js');
+  const render = fakeRender({ online: true });
+  fire(mock, render, MOVIE);
+  render._inserted[0].btn.trigger('hover:enter');
+  assert.strictEqual(mock.calls.broadcastOpen.length, 1);
+  const sent = mock.calls.broadcastOpen[0];
+  assert.strictEqual(sent.type, 'card');
+  assert.strictEqual(sent.object.component, 'full');
+  assert.strictEqual(sent.object.id, MOVIE.id);
+  assert.strictEqual(sent.object.method, 'movie', 'no .name/.number_of_seasons → movie');
+  assert.deepStrictEqual(sent.object.card, MOVIE, 'Broadcast.open dereferences object.card.id');
+  assert.strictEqual(sent.object.source, 'tmdb');
 });
 
 test('no button when Lampa.Broadcast is absent', () => {
@@ -77,12 +98,23 @@ test('no button when Lampa.Broadcast is absent', () => {
   assert.strictEqual(render._inserted.length, 0);
 });
 
-test('no button in child mode (parental_control set)', () => {
-  const mock = makeMock({ storage: { parental_control: true } });
+test('no button for a child profile (Account.Permit.child — the signal native Broadcast uses)', () => {
+  const mock = makeMock({ childProfile: true });
   loadPluginFile(mock, 'broadcast.js');
   const render = fakeRender({ online: true });
   fire(mock, render, MOVIE);
   assert.strictEqual(render._inserted.length, 0);
+});
+
+test('button DOES render on a normal profile even though field() returns truthy "undefined" for unknown keys', () => {
+  // Regression: real Params.field returns the STRING 'undefined' for unregistered
+  // keys (e.g. 'parental_control'), which hid the button on every real device.
+  const mock = makeMock();
+  assert.strictEqual(mock.Lampa.Storage.field('parental_control'), 'undefined', 'mock models real field()');
+  loadPluginFile(mock, 'broadcast.js');
+  const render = fakeRender({ online: true });
+  fire(mock, render, MOVIE);
+  assert.strictEqual(render._inserted.length, 1);
 });
 
 test('Broadcast.open throwing shows a Noty and does not propagate', () => {

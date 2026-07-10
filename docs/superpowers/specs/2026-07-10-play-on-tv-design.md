@@ -62,14 +62,22 @@ if (Lampa.Activity.active().component === 'full') { … }
 1. **Idempotency:** return early if `.view--playtv` already exists in `renderRoot`.
 2. **Gates (don't render the button at all if any fail):**
    - `Lampa.Broadcast` and `Lampa.Broadcast.open` exist (feature-detect the running build).
-   - Not in child mode (`Lampa.Storage.field('parental_control')` truthy → skip).
+   - Not a child profile: `Lampa.Account.Permit.child` — the same public signal
+     native Broadcast checks. (Live-verified correction: `Storage.field('parental_control')`
+     is NOT a real Lampa key, and `field()` returns the truthy string `'undefined'`
+     for unregistered keys, which hid the button on every real device.)
 3. Build the button from an HTML template: `full-start__button selector view--playtv`
    with a TV/cast SVG icon and a localized `<span>` label.
 4. **Placement:** insert **after** the online button (`.view--online`) if present,
    else after `.view--torrent`, else append into the `.full-start__buttons` /
    `.full-start-new__buttons` row — so ordering is predictable regardless of which
    other plugins loaded.
-5. **`hover:enter` handler:** `Lampa.Broadcast.open({ type: 'card', object: movie })`.
+5. **`hover:enter` handler:** `Lampa.Broadcast.open({ type: 'card', object: <activity object> })`,
+   where the object is `Lampa.Activity.extractObject(Lampa.Activity.active())` (exactly what
+   the native broadcast icon sends), falling back to a constructed
+   `{ component:'full', id, method, card: movie, source }` if `Activity.active()` is
+   unavailable. (Live-verified correction: `Broadcast.open`'s card branch dereferences
+   `params.object.card.id` — passing the raw movie throws at device-pick time.)
    Wrap in try/catch; on throw, `Lampa.Noty.show(<localized error>)`.
 
 ### Localization

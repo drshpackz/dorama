@@ -75,7 +75,17 @@ function makeMock(options) {
       follow: function (name, fn) { calls.listeners[name] = fn; },
       send: function (name, ev) { if (calls.listeners[name]) calls.listeners[name](ev); }
     },
-    Activity: { push: function (o) { calls.activityPush.push(o); } },
+    Activity: {
+      push: function (o) { calls.activityPush.push(o); },
+      // Models real Lampa: active() returns the current activity object;
+      // extractObject strips the runtime keys (activity/props/params).
+      active: function () { if (!options.activeActivity) throw new Error('no active activity'); return options.activeActivity; },
+      extractObject: function (object) {
+        var saved = {};
+        for (var i in object) if (!(i === 'activity' || i === 'props' || i === 'params')) saved[i] = object[i];
+        return saved;
+      }
+    },
     Component: { add: function (name, fn) { calls.componentAdd[name] = fn; } },
     InteractionMain: InteractionMain,
     InteractionCategory: InteractionMain,
@@ -93,7 +103,9 @@ function makeMock(options) {
       if (options.storage) for (var sk in options.storage) if (options.storage.hasOwnProperty(sk)) store[sk] = options.storage[sk];
       var changeFns = [];
       return {
-        field: function (k) { if (k in store) return store[k]; return k === 'tmdb_lang' ? 'ru' : undefined; },
+        // Models real Lampa: Params.field(name) = Storage.get(name, defaults[name] + '').
+        // Unregistered keys therefore return the TRUTHY string 'undefined', not undefined.
+        field: function (k) { if (k in store) return store[k]; return k === 'tmdb_lang' ? 'ru' : 'undefined'; },
         get: function (k, def) { return (k in store) ? store[k] : def; },
         set: function (k, v) { store[k] = v; for (var i = 0; i < changeFns.length; i++) changeFns[i]({ name: k, value: v }); },
         listener: { follow: function (name, fn) { if (name === 'change') changeFns.push(fn); }, send: function () {} }
@@ -111,6 +123,9 @@ function makeMock(options) {
       add: function () {},
       translate: function (k) { return k; }
     },
+    // Models real Lampa: Account.Permit.child is the public child-profile signal
+    // (the same one native Broadcast's head icon checks).
+    Account: { Permit: { child: !!options.childProfile } },
     Broadcast: options.noBroadcast ? undefined : {
       open: function (params) {
         if (options.broadcastThrow) throw new Error('broadcast failed');

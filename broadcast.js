@@ -37,7 +37,28 @@
   }
 
   function childMode() {
-    try { return !!Lampa.Storage.field('parental_control'); } catch (e) { return false; }
+    // Same public signal native Broadcast checks (Permit.child) — exposed as
+    // Lampa.Account.Permit. NOTE: never use Storage.field() for this: field()
+    // returns the STRING 'undefined' (truthy!) for unregistered keys.
+    try { return !!(Lampa.Account && Lampa.Account.Permit && Lampa.Account.Permit.child); } catch (e) { return false; }
+  }
+
+  // Broadcast.open('card') dereferences params.object.card.id — it expects the
+  // full-page ACTIVITY object (what the native icon sends), not the raw movie.
+  function buildCardObject(movie) {
+    try {
+      var act = Lampa.Activity.active();
+      if (act && act.component === 'full' && Lampa.Activity.extractObject) {
+        return Lampa.Activity.extractObject(act);
+      }
+    } catch (e) {}
+    return {
+      component: 'full',
+      id: movie.id,
+      method: (movie.name || movie.number_of_seasons) ? 'tv' : 'movie',
+      card: movie,
+      source: movie.source || 'tmdb'
+    };
   }
 
   function canBroadcast() {
@@ -52,7 +73,7 @@
     var btn = $(makeButtonHtml());
     btn.on('hover:enter', function () {
       try {
-        Lampa.Broadcast.open({ type: 'card', object: movie });
+        Lampa.Broadcast.open({ type: 'card', object: buildCardObject(movie) });
       } catch (e) {
         Lampa.Noty.show(Lampa.Lang.translate('playontv_error'));
       }
