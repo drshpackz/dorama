@@ -194,15 +194,12 @@ test('escapeHtml(): device names are escaped (they are remote-controlled strings
   assert.strictEqual(api._escapeHtml('<img src=x onerror=alert(1)>&"'), '&lt;img src=x onerror=alert(1)&gt;&amp;&quot;');
 });
 
-// ---------- rename: sender side ----------
+// ---------- rename: sender side (inline commit) ----------
 
-test('renameDeviceDialog(): prefills current name; saves local alias AND sends playontv_rename to the device', () => {
-  const mock = makeMock({ inputValue: '  Кухня ТВ  ' });
+test('commitDeviceRename(): trims, saves local alias AND sends playontv_rename to the device', () => {
+  const mock = makeMock();
   const api = loadPluginFile(mock, 'broadcast.js');
-  api._renameDeviceDialog(DEVICE);
-
-  assert.strictEqual(mock.calls.inputEdits.length, 1);
-  assert.strictEqual(mock.calls.inputEdits[0].value, 'Noname - Lampa', 'keyboard prefilled with current display name');
+  assert.strictEqual(api._commitDeviceRename(DEVICE, '  Кухня ТВ  '), true);
 
   assert.strictEqual(api._displayName(DEVICE), 'Кухня ТВ', 'trimmed alias stored locally');
 
@@ -211,12 +208,24 @@ test('renameDeviceDialog(): prefills current name; saves local alias AND sends p
   assert.deepStrictEqual(sent[0].data, { params: { submethod: 'playontv_rename', name: 'Кухня ТВ' }, uid: 'conn-tv' });
 });
 
-test('renameDeviceDialog(): blank input changes nothing', () => {
-  const mock = makeMock({ inputValue: '   ' });
+test('commitDeviceRename(): blank, null (Esc) or unchanged value changes nothing', () => {
+  const mock = makeMock();
   const api = loadPluginFile(mock, 'broadcast.js');
-  api._renameDeviceDialog(DEVICE);
+  assert.strictEqual(api._commitDeviceRename(DEVICE, '   '), false, 'blank rejected');
+  assert.strictEqual(api._commitDeviceRename(DEVICE, null), false, 'Esc/cancel rejected');
+  assert.strictEqual(api._commitDeviceRename(DEVICE, 'Noname - Lampa'), false, 'unchanged name is a no-op');
   assert.strictEqual(api._displayName(DEVICE), 'Noname - Lampa');
   assert.strictEqual(mock.calls.socketSend.filter(s => s.method === 'other').length, 0);
+});
+
+test('commitSelfRename(): trims and saves device_name; blank/unchanged are no-ops', () => {
+  const mock = makeMock({ storage: { device_name: 'Lampa TV' } });
+  const api = loadPluginFile(mock, 'broadcast.js');
+  assert.strictEqual(api._commitSelfRename('  Гостиная  '), true);
+  assert.strictEqual(mock.Lampa.Storage.get('device_name'), 'Гостиная');
+  assert.strictEqual(api._commitSelfRename('Гостиная'), false, 'unchanged is a no-op');
+  assert.strictEqual(api._commitSelfRename('   '), false);
+  assert.strictEqual(mock.Lampa.Storage.get('device_name'), 'Гостиная');
 });
 
 // ---------- rename: receiver side ----------

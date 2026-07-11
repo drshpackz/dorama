@@ -19,7 +19,7 @@
 (function () {
   'use strict';
 
-  var manifest = { name: 'Broadcast', version: '2.0.0' };
+  var manifest = { name: 'Broadcast', version: '2.1.0' };
 
   function addLang() {
     if (!Lampa.Lang || !Lampa.Lang.add) return;
@@ -34,11 +34,6 @@
         ru: 'Переименовать это устройство',
         en: 'Rename this device',
         uk: 'Перейменувати цей пристрій'
-      },
-      playontv_rename_other: {
-        ru: 'Переименовать устройство',
-        en: 'Rename device',
-        uk: 'Перейменувати пристрій'
       },
       playontv_renamed: {
         ru: 'Устройство переименовано',
@@ -210,35 +205,55 @@
     }
   }
 
-  // ---------- rename dialogs ----------
+  // ---------- inline rename ----------
 
-  function renameDeviceDialog(device, done) {
-    if (!(Lampa.Input && typeof Lampa.Input.edit === 'function')) return;
-    Lampa.Input.edit({
-      title: Lampa.Lang.translate('playontv_rename_other'),
-      value: displayName(device),
-      free: true,
-      nosave: true
-    }, function (value) {
-      var v = typeof value === 'string' ? value.replace(/^\s+|\s+$/g, '') : '';
-      if (v) sendRename(device, v);
-      try { Lampa.Controller.toggle('modal'); } catch (e) {}
-      if (done) done();
-    });
+  // Commit half of an inline rename: value === null means cancelled (Esc).
+  function commitDeviceRename(device, value) {
+    var v = typeof value === 'string' ? value.replace(/^\s+|\s+$/g, '') : '';
+    if (!v || v === displayName(device)) return false;
+    sendRename(device, v);
+    return true;
   }
 
-  function selfRenameDialog(done) {
-    if (!(Lampa.Input && typeof Lampa.Input.edit === 'function')) return;
-    Lampa.Input.edit({
-      title: Lampa.Lang.translate('playontv_rename'),
-      value: deviceName(),
-      free: true,
-      nosave: true
-    }, function (value) {
-      saveDeviceName(value);
-      try { Lampa.Controller.toggle('modal'); } catch (e) {}
-      if (done) done();
+  function commitSelfRename(value) {
+    var v = typeof value === 'string' ? value.replace(/^\s+|\s+$/g, '') : '';
+    if (!v || v === deviceName()) return false;
+    return saveDeviceName(v);
+  }
+
+  // Swap an element's content for a text input, in place. Enter/blur commit,
+  // Esc cancels; onDone(value|null) fires exactly once. Key events must not
+  // bubble — Lampa's Navigator would treat them as remote-control navigation.
+  function startInlineEdit(el, current, onDone) {
+    var input = $('<input type="text" style="width:100%;box-sizing:border-box;background:transparent;border:none;outline:none;color:inherit;font:inherit;padding:0" />');
+    var done = false;
+
+    function finish(commit) {
+      if (done) return;
+      done = true;
+      var v = '';
+      try { v = input.val(); } catch (e) {}
+      onDone(commit ? v : null);
+    }
+
+    input.on('keydown', function (e) {
+      if (e.stopPropagation) e.stopPropagation();
+      if (e.keyCode === 13) finish(true);
+      if (e.keyCode === 27) finish(false);
     });
+    // Clicks inside the input must not bubble into the row's hover:enter
+    // (which would cast to the device / restart the edit).
+    input.on('click mousedown mouseup', function (e) {
+      if (e.stopPropagation) e.stopPropagation();
+    });
+    input.on('blur', function () { finish(true); });
+
+    el.empty();
+    el.append(input);
+    try { input.val(current); } catch (e) {}
+    setTimeout(function () {
+      try { input[0].focus(); input[0].select(); } catch (e) {}
+    }, 30);
   }
 
   // ---------- the picker ----------
@@ -279,6 +294,7 @@
       var filtered = pickerDevices(lastDevices);
       for (var i = 0; i < filtered.length; i++) {
         (function (device) {
+          var editing = false;
           var wrap = $('<div style="display:flex;align-items:stretch"></div>');
           var name = $('<div class="broadcast__device selector" style="flex-grow:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
             escapeHtml(displayName(device)) + '</div>');
@@ -286,12 +302,20 @@
             penSvg('1.2em') + '</div>');
 
           name.on('hover:enter', function () {
+            if (editing) return; // an input is open inside this row
             close();
             sendOpenTo(device, movie);
           }).on('hover:focus', function () { lastKey = device.uid; });
 
           pen.on('hover:enter', function () {
-            renameDeviceDialog(device, function () { renderDevices(lastDevices); });
+            if (editing) return;
+            editing = true;
+            // The name cell becomes the input, right where it was clicked.
+            startInlineEdit(name, displayName(device), function (value) {
+              editing = false;
+              commitDeviceRename(device, value);
+              renderDevices(lastDevices);
+            });
           }).on('hover:focus', function () { lastKey = device.uid + ':pen'; });
 
           if (lastKey === device.uid) select = name[0];
@@ -303,9 +327,16 @@
         })(filtered[i]);
       }
 
+      var selfEditing = false;
       var self_row = $(renameRowHtml());
       self_row.on('hover:enter', function () {
-        selfRenameDialog(function () { renderDevices(lastDevices); });
+        if (selfEditing) return;
+        selfEditing = true;
+        startInlineEdit(self_row, deviceName(), function (value) {
+          selfEditing = false;
+          commitSelfRename(value);
+          renderDevices(lastDevices);
+        });
       }).on('hover:focus', function () { lastKey = ':self'; });
       if (lastKey === ':self') select = self_row[0];
       list.append(self_row);
@@ -393,7 +424,8 @@
       _pickerDevices: pickerDevices,
       _displayName: displayName,
       _sendOpenTo: sendOpenTo,
-      _renameDeviceDialog: renameDeviceDialog,
+      _commitDeviceRename: commitDeviceRename,
+      _commitSelfRename: commitSelfRename,
       _handleSocketMessage: handleSocketMessage
     };
   }
