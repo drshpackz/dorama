@@ -903,11 +903,90 @@
     Lampa.Storage.set('dorama_shorts_viewed', arr);
   }
 
+  var SHORTS_PAGE_LIMIT = 50;
+  var SHORTS_EXTRA_PAGES = 2;
+
+  // done(items): the final ordered feed. done(null) only when the very first
+  // request can't reach any mirror; a failed DEEPER page just stops the walk.
+  function buildShortsFeedData(network, done) {
+    fetchLenta(network, { sort: 'new', page: 1, limit: SHORTS_PAGE_LIMIT }, function (first) {
+      if (first === null) { done(null); return; }
+      walk(SHORTS_EXTRA_PAGES, dedupeById(filterReadyShots(first)));
+    });
+    function walk(left, acc) {
+      if (left <= 0 || !acc.length) { finish(acc); return; }
+      fetchLenta(network, { sort: 'from_id', id: minShortId(acc), limit: SHORTS_PAGE_LIMIT }, function (more) {
+        if (!more || !more.length) { finish(acc); return; }
+        walk(left - 1, dedupeById(acc.concat(filterReadyShots(more))));
+      });
+    }
+    function finish(acc) {
+      if (!acc.length) { done([]); return; }
+      resolveShortsLanguages(network, acc, function (langMap) {
+        done(orderShorts(acc, langMap, Lampa.Storage.get('dorama_shorts_viewed', []) || []));
+      });
+    }
+  }
+
+  // One deeper history page for feed paging. done([]) on any failure so the
+  // feed simply stops growing instead of erroring mid-watch.
+  function shortsLoadMore(network, lastId, done) {
+    fetchLenta(network, { sort: 'from_id', id: lastId, limit: SHORTS_PAGE_LIMIT }, function (more) {
+      if (!more || !more.length) { done([]); return; }
+      var ready = dedupeById(filterReadyShots(more));
+      if (!ready.length) { done([]); return; }
+      resolveShortsLanguages(network, ready, function (langMap) {
+        done(orderShorts(ready, langMap, Lampa.Storage.get('dorama_shorts_viewed', []) || []));
+      });
+    });
+  }
+
+  function openShorts(feedFactory) {
+    var factory = feedFactory || createShortsFeed;
+    var network = new Lampa.Reguest();
+    if (Lampa.Loading && Lampa.Loading.start) Lampa.Loading.start(function () { network.clear(); });
+    buildShortsFeedData(network, function (items) {
+      if (Lampa.Loading && Lampa.Loading.stop) Lampa.Loading.stop();
+      if (items === null) {
+        Lampa.Noty.show('Shorts: сервер недоступен, попробуйте позже');
+        return;
+      }
+      if (!items.length) {
+        Lampa.Noty.show('Пока нет коротких роликов по дорамам');
+        return;
+      }
+      factory(items, function (lastId, cb) { shortsLoadMore(network, lastId, cb); });
+    });
+  }
+
+  // Interim stub: replaced by the real fullscreen feed in the next commit.
+  // Keeps the menu handler harmless if this build ships standalone.
+  function createShortsFeed(items, loadMore) {
+    Lampa.Noty.show('Shorts: обновите плагин до полной версии');
+  }
+
+  var SHORTS_ICON =
+    '<svg width="24" height="24" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+    '<path d="M253.266 512a19.166 19.166 0 0 1-19.168-19.168V330.607l-135.071-.049a19.164 19.164 0 0 1-16.832-28.32L241.06 10.013a19.167 19.167 0 0 1 36.005 9.154v162.534h135.902a19.167 19.167 0 0 1 16.815 28.363L270.078 502.03a19.173 19.173 0 0 1-16.812 9.97z" fill="currentColor"/></svg>';
+
+  function addShortsMenuItem() {
+    var item = $(
+      '<li class="menu__item selector" data-action="dorama_shorts">' +
+      '<div class="menu__ico">' + SHORTS_ICON + '</div>' +
+      '<div class="menu__text">Shorts</div>' +
+      '</li>'
+    );
+    item.on('hover:enter', function () { openShorts(); });
+    $('.menu .menu__list').eq(0).append(item);
+  }
+  // ===================== end Shorts (CUB clip feed) =====================
+
   function start() {
     if (window.dorama_plugin_ready) return; // guard against double init
     window.dorama_plugin_ready = true;
     Lampa.Component.add('dorama', componentDorama);
     addMenuItem();
+    addShortsMenuItem();
     registerMatchBadge();
     if (Lampa.Listener && Lampa.Listener.follow) {
       Lampa.Listener.follow('state:changed', function (e) { if (e && e.target === 'favorite') setRecsDirty(); });
@@ -954,7 +1033,11 @@
       _shortsCardKey: shortsCardKey,
       _resolveShortsLanguages: resolveShortsLanguages,
       _orderShorts: orderShorts,
-      _markShortViewed: markShortViewed
+      _markShortViewed: markShortViewed,
+      _buildShortsFeedData: buildShortsFeedData,
+      _shortsLoadMore: shortsLoadMore,
+      _openShorts: openShorts,
+      _addShortsMenuItem: addShortsMenuItem
     };
   }
 })();

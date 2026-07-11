@@ -172,3 +172,75 @@ test('markShortViewed stores unique ids and caps at 500', () => {
   assert.strictEqual(arr.indexOf(1), -1, 'oldest id evicted');
   assert.ok(arr.indexOf(509) >= 0, 'newest id kept');
 });
+
+test('buildShortsFeedData: fetches 3 pages, filters, resolves and orders', () => {
+  const page1 = [shot(300, 1, 'tv'), shot(299, 2, 'movie', { status: 'processing' })];
+  const page2 = [shot(250, 3, 'movie'), shot(300, 1, 'tv')]; // 300 is a dupe
+  const page3 = [shot(200, 4, 'tv')];
+  const mock = shortsMock({
+    shotsByCall: [page1, page2, page3],
+    langs: { 'tv/1': 'ja', 'movie/3': 'ko', 'tv/4': 'en' }
+  });
+  const api = loadPlugin(mock);
+  let items;
+  api._buildShortsFeedData(new mock.Lampa.Reguest(), r => { items = r; });
+  // ko (250) first, ja (300) second, en (200) dropped, dupe collapsed
+  assert.deepStrictEqual(items.map(s => s.id), [250, 300]);
+  const lentaUrls = mock.calls.requests.filter(u => u.indexOf('/api/shots/lenta') >= 0);
+  assert.strictEqual(lentaUrls.length, 3);
+  assert.ok(lentaUrls[1].indexOf('sort=from_id') >= 0);
+  assert.ok(lentaUrls[1].indexOf('id=300') >= 0, 'walks down from the smallest seen id');
+});
+
+test('buildShortsFeedData reports null on total network failure', () => {
+  const mock = shortsMock({ failAllShots: true });
+  const api = loadPlugin(mock);
+  let items = 'unset';
+  api._buildShortsFeedData(new mock.Lampa.Reguest(), r => { items = r; });
+  assert.strictEqual(items, null);
+});
+
+test('openShorts: feed factory gets the ordered items and a loadMore fn', () => {
+  const mock = shortsMock({
+    shotsByCall: [[shot(300, 1, 'tv')], [], []],
+    langs: { 'tv/1': 'ko' }
+  });
+  const api = loadPlugin(mock);
+  let seen;
+  api._openShorts((items, loadMore) => { seen = { items, loadMore }; });
+  assert.deepStrictEqual(seen.items.map(s => s.id), [300]);
+  assert.strictEqual(typeof seen.loadMore, 'function');
+  assert.strictEqual(mock.calls.noty.length, 0);
+});
+
+test('openShorts: empty Asian pool -> Noty, factory not called', () => {
+  const mock = shortsMock({
+    shotsByCall: [[shot(300, 1, 'tv')], [], []],
+    langs: { 'tv/1': 'en' } // nothing Asian
+  });
+  const api = loadPlugin(mock);
+  let called = false;
+  api._openShorts(() => { called = true; });
+  assert.strictEqual(called, false);
+  assert.strictEqual(mock.calls.noty.length, 1);
+  assert.ok(/Пока нет/.test(mock.calls.noty[0]));
+});
+
+test('openShorts: network dead -> error Noty, factory not called', () => {
+  const mock = shortsMock({ failAllShots: true });
+  const api = loadPlugin(mock);
+  let called = false;
+  api._openShorts(() => { called = true; });
+  assert.strictEqual(called, false);
+  assert.strictEqual(mock.calls.noty.length, 1);
+  assert.ok(/недоступен/.test(mock.calls.noty[0]));
+});
+
+test('menu: Shorts item lands right after Дорама', () => {
+  const mock = shortsMock();
+  const api = loadPlugin(mock);
+  api._addMenuItem();
+  api._addShortsMenuItem();
+  const texts = mock.menuList._children.map(c => c.text());
+  assert.deepStrictEqual(texts, ['Дорама', 'Shorts']);
+});
