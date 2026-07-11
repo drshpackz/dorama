@@ -888,6 +888,63 @@
     for (i = 0; i < burst; i++) launchNext();
   }
 
+  var SHORTS_TASTE_MAX = 100;
+  var SHORTS_GENRE_ADJ_STEP = 0.5;
+  var SHORTS_GENRE_ADJ_CLAMP = 1.5;
+
+  function shortsTasteGet() {
+    var t = Lampa.Storage.get('dorama_shorts_taste', {}) || {};
+    return { up: t.up || [], down: t.down || [] };
+  }
+
+  // kind: 'up' | 'down'. Toggles cardKey in that list; adding to one list
+  // removes it from the other (❤ and 👎 are mutually exclusive). Returns true
+  // when the key is active in `kind` after the call.
+  function shortsTasteToggle(kind, cardKey) {
+    var t = shortsTasteGet();
+    var list = t[kind], other = t[kind === 'up' ? 'down' : 'up'];
+    var oi = other.indexOf(cardKey);
+    if (oi >= 0) other.splice(oi, 1);
+    var i = list.indexOf(cardKey), active;
+    if (i >= 0) { list.splice(i, 1); active = false; }
+    else {
+      list.push(cardKey);
+      if (list.length > SHORTS_TASTE_MAX) list.shift();
+      active = true;
+    }
+    Lampa.Storage.set('dorama_shorts_taste', t);
+    return active;
+  }
+
+  // Shorts feed taste: boost/sink card sets + a genre adjustment map.
+  // boost = dorama recommendation positives (liked/reacted titles) + Shorts ❤;
+  // sink = Shorts 👎 (sink evicts boost). genreAdj uses ONLY the Shorts store
+  // (±0.5 per genre occurrence, clamped ±1.5) — the liked-title tier already
+  // carries the main dorama signal, so the profile is not recomputed here.
+  function buildShortsTaste(metaMap) {
+    var t = shortsTasteGet();
+    var boost = {}, sink = {}, adj = {}, i, sig;
+    try { sig = collectSignals(); } catch (e) { sig = { positives: [] }; }
+    for (i = 0; i < sig.positives.length; i++) boost[sig.positives[i].media + '_' + sig.positives[i].id] = 1;
+    for (i = 0; i < t.up.length; i++) boost[t.up[i]] = 1;
+    for (i = 0; i < t.down.length; i++) { sink[t.down[i]] = 1; delete boost[t.down[i]]; }
+    function apply(list, step) {
+      var a, b, gids, g;
+      for (a = 0; a < list.length; a++) {
+        gids = (metaMap[list[a]] || {}).genres || [];
+        for (b = 0; b < gids.length; b++) {
+          g = gids[b];
+          adj[g] = (adj[g] || 0) + step;
+          if (adj[g] > SHORTS_GENRE_ADJ_CLAMP) adj[g] = SHORTS_GENRE_ADJ_CLAMP;
+          if (adj[g] < -SHORTS_GENRE_ADJ_CLAMP) adj[g] = -SHORTS_GENRE_ADJ_CLAMP;
+        }
+      }
+    }
+    apply(t.up, SHORTS_GENRE_ADJ_STEP);
+    apply(t.down, -SHORTS_GENRE_ADJ_STEP);
+    return { boostCards: boost, sinkCards: sink, genreAdj: adj };
+  }
+
   var SHORTS_ASIAN_FILL = { ja: 1, zh: 1, th: 1 };
   var SHORTS_VIEWED_MAX = 500;
 
@@ -1225,6 +1282,9 @@
       _minShortId: minShortId,
       _shortsCardKey: shortsCardKey,
       _resolveShortsMeta: resolveShortsMeta,
+      _shortsTasteGet: shortsTasteGet,
+      _shortsTasteToggle: shortsTasteToggle,
+      _buildShortsTaste: buildShortsTaste,
       _orderShorts: orderShorts,
       _markShortViewed: markShortViewed,
       _buildShortsFeedData: buildShortsFeedData,

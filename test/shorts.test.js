@@ -13,6 +13,8 @@ function shortsMock(opts) {
   let lentaCall = 0;
   const mock = makeMock({
     storage: opts.storage,
+    favorites: opts.favorites,
+    mine_reactions: opts.mine_reactions,
     responder: function (url) {
       if (url.indexOf('/api/shots/lenta') >= 0) {
         if (opts.failAllShots) return { __error: 500 };
@@ -323,6 +325,55 @@ test('openShorts loadMore walks past non-Asian pages and stops when exhausted', 
   loadMoreFn(r => { result3 = r; });
   assert.deepStrictEqual(result3, []);
   assert.strictEqual(lentaRequests().length, countAfterSecond, 'exhausted feed does not issue a third lenta request');
+});
+
+test('shortsTasteToggle: round-trip, mutual exclusion, cap', () => {
+  const mock = shortsMock();
+  const api = loadPlugin(mock);
+  assert.strictEqual(api._shortsTasteToggle('up', 'tv_1'), true);
+  assert.deepStrictEqual(mock.Lampa.Storage.get('dorama_shorts_taste', {}), { up: ['tv_1'], down: [] });
+  assert.strictEqual(api._shortsTasteToggle('down', 'tv_1'), true, 'down evicts up');
+  assert.deepStrictEqual(mock.Lampa.Storage.get('dorama_shorts_taste', {}), { up: [], down: ['tv_1'] });
+  assert.strictEqual(api._shortsTasteToggle('down', 'tv_1'), false, 'second toggle removes');
+  assert.deepStrictEqual(mock.Lampa.Storage.get('dorama_shorts_taste', {}), { up: [], down: [] });
+  for (let i = 0; i < 101; i++) api._shortsTasteToggle('up', 'movie_' + i);
+  const up = mock.Lampa.Storage.get('dorama_shorts_taste', {}).up;
+  assert.strictEqual(up.length, 100);
+  assert.strictEqual(up.indexOf('movie_0'), -1, 'oldest dropped');
+});
+
+test('buildShortsTaste: boosts from signals + up-list, sinks win, genreAdj clamped', () => {
+  const mock = shortsMock({
+    favorites: { like: [{ id: 777, name: 'liked show', original_language: 'ko' }], history: [], viewed: [] },
+    storage: { dorama_shorts_taste: { up: ['movie_5', 'tv_9'], down: ['tv_777', 'movie_6'] } }
+  });
+  const api = loadPlugin(mock);
+  const metaMap = {
+    movie_5: { lang: 'ko', genres: [18, 53] },
+    tv_9: { lang: 'ko', genres: [18] },
+    movie_6: { lang: 'ko', genres: [35] },
+    tv_777: { lang: 'ko', genres: [] }
+  };
+  const taste = api._buildShortsTaste(metaMap);
+  assert.strictEqual(taste.boostCards.movie_5, 1);
+  assert.strictEqual(taste.boostCards.tv_9, 1);
+  assert.strictEqual(taste.boostCards.tv_777, undefined, 'sink evicts the liked-signal boost');
+  assert.strictEqual(taste.sinkCards.tv_777, 1);
+  assert.strictEqual(taste.sinkCards.movie_6, 1);
+  assert.strictEqual(taste.genreAdj[18], 1.0, '0.5 from movie_5 + 0.5 from tv_9');
+  assert.strictEqual(taste.genreAdj[53], 0.5);
+  assert.strictEqual(taste.genreAdj[35], -0.5);
+});
+
+test('buildShortsTaste: genreAdj clamps at ±1.5 and empty signals give empty taste', () => {
+  const up = [];
+  const metaMap = {};
+  for (let i = 0; i < 4; i++) { up.push('movie_' + i); metaMap['movie_' + i] = { lang: 'ko', genres: [18] }; }
+  const mock = shortsMock({ storage: { dorama_shorts_taste: { up, down: [] } } });
+  const api = loadPlugin(mock);
+  assert.strictEqual(api._buildShortsTaste(metaMap).genreAdj[18], 1.5, '4×0.5 clamped to 1.5');
+  const empty = loadPlugin(shortsMock())._buildShortsTaste({});
+  assert.deepStrictEqual(empty, { boostCards: {}, sinkCards: {}, genreAdj: {} });
 });
 
 test('menu: Shorts item lands right after Дорама', () => {
