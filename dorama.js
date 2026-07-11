@@ -959,10 +959,155 @@
     });
   }
 
-  // Interim stub: replaced by the real fullscreen feed in the next commit.
-  // Keeps the menu handler harmless if this build ships standalone.
+  var SHORTS_CSS_ID = 'dorama-shorts-css';
+  var SHORTS_CSS =
+    '.dorama-shorts{position:fixed;left:0;top:0;width:100%;height:100%;z-index:500;background:#000}' +
+    '.dorama-shorts video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;background:#000}' +
+    '.dorama-shorts__progress{position:absolute;left:1em;right:1em;bottom:1em;height:.3em;background:rgba(255,255,255,.3);border-radius:1em;z-index:2}' +
+    '.dorama-shorts__progress>div{height:100%;width:0;background:#fff;border-radius:1em}' +
+    '.dorama-shorts__panel{position:absolute;left:0;right:0;bottom:0;padding:1.5em;padding-bottom:2.5em;background:linear-gradient(to top,rgba(0,0,0,.7),rgba(0,0,0,0));transition:opacity .3s;z-index:1}' +
+    '.dorama-shorts--idle .dorama-shorts__panel{opacity:0}' +
+    '.dorama-shorts__year{font-size:1em;opacity:.8}' +
+    '.dorama-shorts__title{font-size:1.7em;line-height:1.3;margin-top:.2em;text-shadow:0 0 .2em rgba(0,0,0,.5)}' +
+    '.dorama-shorts__tags{margin-top:.6em}' +
+    '.dorama-shorts__tags span{display:inline-block;background:rgba(0,0,0,.4);border-radius:.4em;padding:.2em .6em;margin-right:.4em;font-size:.9em}' +
+    '.dorama-shorts__hint{position:absolute;right:1.5em;bottom:2.5em;font-size:.85em;opacity:.6;z-index:1}';
+
+  function injectShortsCss() {
+    if (document.getElementById(SHORTS_CSS_ID)) return;
+    var style = document.createElement('style');
+    style.id = SHORTS_CSS_ID;
+    style.textContent = SHORTS_CSS;
+    document.body.appendChild(style);
+  }
+
   function createShortsFeed(items, loadMore) {
-    Lampa.Noty.show('Shorts: обновите плагин до полной версии');
+    injectShortsCss();
+    var position = 0, loadingMore = false, wheelTime = 0, touchY = null, idleTimer = null;
+    var root = document.createElement('div');
+    root.className = 'dorama-shorts';
+    root.innerHTML =
+      '<video autoplay loop playsinline></video>' +
+      '<div class="dorama-shorts__panel">' +
+      '<div class="dorama-shorts__year"></div>' +
+      '<div class="dorama-shorts__title"></div>' +
+      '<div class="dorama-shorts__tags"></div>' +
+      '</div>' +
+      '<div class="dorama-shorts__hint">OK — карточка, ↑↓ — ролики</div>' +
+      '<div class="dorama-shorts__progress"><div></div></div>';
+    var video = root.querySelector('video');
+    var bar = root.querySelector('.dorama-shorts__progress div');
+    var elYear = root.querySelector('.dorama-shorts__year');
+    var elTitle = root.querySelector('.dorama-shorts__title');
+    var elTags = root.querySelector('.dorama-shorts__tags');
+
+    function current() { return items[position]; }
+
+    function wake() {
+      root.classList.remove('dorama-shorts--idle');
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(function () { root.classList.add('dorama-shorts--idle'); }, 5000);
+    }
+
+    function show(shot) {
+      elYear.textContent = shot.card_year || '';
+      elTitle.textContent = shot.card_title || '';
+      var tags = [];
+      if (shot.season) tags.push('S-' + shot.season);
+      if (shot.episode) tags.push('E-' + shot.episode);
+      if (shot.voice_name) tags.push(shot.voice_name);
+      elTags.innerHTML = '';
+      for (var i = 0; i < tags.length; i++) {
+        var span = document.createElement('span');
+        span.textContent = tags[i];
+        elTags.appendChild(span);
+      }
+      bar.style.width = '0%';
+      video.poster = shot.screen || '';
+      video.src = shot.file;
+      var p = video.play();
+      if (p && p['catch']) p['catch'](function () {});
+      wake();
+    }
+
+    function move(dir) {
+      var next = position + dir;
+      if (next < 0 || next >= items.length) { wake(); return; }
+      markShortViewed(current().id);
+      position = next;
+      show(current());
+      if (position >= items.length - 3 && !loadingMore) {
+        loadingMore = true;
+        loadMore(minShortId(items), function (more) {
+          loadingMore = false;
+          for (var i = 0; i < more.length; i++) {
+            var dupe = false;
+            for (var j = 0; j < items.length; j++) if (items[j].id === more[i].id) { dupe = true; break; }
+            if (!dupe) items.push(more[i]);
+          }
+        });
+      }
+    }
+
+    function openCard() {
+      var shot = current();
+      destroy();
+      Lampa.Activity.push({
+        component: 'full', source: 'tmdb',
+        id: parseInt(shot.card_id, 10),
+        method: shot.card_type === 'tv' ? 'tv' : 'movie',
+        card: { id: parseInt(shot.card_id, 10) }
+      });
+    }
+
+    function destroy() {
+      markShortViewed(current().id);
+      clearTimeout(idleTimer);
+      video.pause();
+      video.src = '';
+      if (root.parentNode) root.parentNode.removeChild(root);
+      Lampa.Controller.toggle('content');
+    }
+
+    video.addEventListener('timeupdate', function () {
+      if (video.duration) bar.style.width = (video.currentTime / video.duration * 100) + '%';
+    });
+    // A clip whose mp4 404s or can't decode is dropped and skipped over.
+    video.addEventListener('error', function () {
+      if (items.length <= 1) { destroy(); return; }
+      items.splice(position, 1);
+      if (position >= items.length) position = items.length - 1;
+      show(current());
+    });
+    root.addEventListener('wheel', function (e) {
+      if (Date.now() - wheelTime < 500) return;
+      wheelTime = Date.now();
+      move(e.deltaY > 0 ? 1 : -1);
+    });
+    root.addEventListener('touchstart', function (e) {
+      touchY = (e.touches[0] || e.changedTouches[0]).clientY;
+    });
+    root.addEventListener('touchend', function (e) {
+      if (touchY === null) return;
+      var dy = touchY - (e.changedTouches[0] || e.touches[0]).clientY;
+      touchY = null;
+      if (dy > 80) move(1);
+      else if (dy < -80) move(-1);
+      else video.paused ? video.play() : video.pause();
+    });
+
+    Lampa.Controller.add('dorama_shorts', {
+      toggle: function () { wake(); },
+      up: function () { move(-1); },
+      down: function () { move(1); },
+      left: function () { wake(); },
+      right: function () { wake(); },
+      enter: openCard,
+      back: destroy
+    });
+    document.body.appendChild(root);
+    show(current());
+    Lampa.Controller.toggle('dorama_shorts');
   }
 
   var SHORTS_ICON =
