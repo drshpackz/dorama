@@ -825,13 +825,21 @@
     return (shot.card_type === 'tv' ? 'tv' : 'movie') + '_' + shot.card_id;
   }
 
-  var SHORTS_LANG_CACHE_MAX = 500;
+  var SHORTS_META_CACHE_MAX = 500;
   var SHORTS_LOOKUP_CONCURRENCY = 4;
 
-  // done(langMap): cardKey -> original_language. A title's language never
-  // changes, so the Storage cache has no TTL — only a size guard.
-  function resolveShortsLanguages(network, shots, done) {
-    var cache = Lampa.Storage.get('dorama_shorts_lang', {}) || {};
+  // done(metaMap): cardKey -> { lang, genres:[ids] }. Language and genres come
+  // from the SAME TMDB detail response, so genres cost zero extra requests.
+  // A title's language/genres never change, so the Storage cache has no TTL —
+  // only a size guard. Migrates the older language-only cache in memory;
+  // persists (under the new key) only when a fetch dirties the cache.
+  function resolveShortsMeta(network, shots, done) {
+    var cache = Lampa.Storage.get('dorama_shorts_meta', null);
+    if (!cache) {
+      cache = {};
+      var old = Lampa.Storage.get('dorama_shorts_lang', null), ok;
+      if (old) { for (ok in old) { if (old.hasOwnProperty(ok)) cache[ok] = { lang: old[ok], genres: [] }; } }
+    }
     var map = {}, pending = [], seen = {}, i, key;
     for (i = 0; i < shots.length; i++) {
       key = shortsCardKey(shots[i]);
@@ -847,16 +855,22 @@
       if (dirty) {
         var count = 0, k;
         for (k in cache) count++;
-        if (count > SHORTS_LANG_CACHE_MAX) {
+        if (count > SHORTS_META_CACHE_MAX) {
           cache = {};
           for (k in map) cache[k] = map[k];
         }
-        Lampa.Storage.set('dorama_shorts_lang', cache);
+        Lampa.Storage.set('dorama_shorts_meta', cache);
       }
       done(map);
     }
-    function settle(item, lang) {
-      if (lang) { map[item.key] = lang; cache[item.key] = lang; dirty = true; }
+    function settle(item, json) {
+      var lang = json && json.original_language;
+      if (lang) {
+        var gids = [], gs = json.genres || [], g;
+        for (g = 0; g < gs.length; g++) { if (gs[g] && gs[g].id) gids.push(gs[g].id); }
+        var entry = { lang: lang, genres: gids };
+        map[item.key] = entry; cache[item.key] = entry; dirty = true;
+      }
       finished++;
       if (finished >= pending.length) { finish(); return; }
       launchNext();
@@ -865,7 +879,7 @@
       if (launched >= pending.length) return;
       var item = pending[launched++];
       network.silent(tmdbUrl(item.path), function (json) {
-        settle(item, json && json.original_language);
+        settle(item, json);
       }, function () {
         settle(item, null);
       });
@@ -886,7 +900,9 @@
     for (i = 0; i < (viewedIds || []).length; i++) viewed[viewedIds[i]] = 1;
     var buckets = { koFresh: [], koSeen: [], asianFresh: [], asianSeen: [] };
     for (i = 0; i < shots.length; i++) {
-      var lang = langMap[shortsCardKey(shots[i])];
+      // Transitional: accepts the old string map and the new meta-entry map.
+      var entry = langMap[shortsCardKey(shots[i])];
+      var lang = entry && entry.lang ? entry.lang : entry;
       var isKo = lang === 'ko';
       if (!isKo && !SHORTS_ASIAN_FILL[lang]) continue;
       var name = (isKo ? 'ko' : 'asian') + (viewed[shots[i].id] ? 'Seen' : 'Fresh');
@@ -934,7 +950,7 @@
     }
     function finish(acc) {
       if (!acc.length) { done([], cursor); return; }
-      resolveShortsLanguages(network, acc, function (langMap) {
+      resolveShortsMeta(network, acc, function (langMap) {
         done(orderShorts(acc, langMap, Lampa.Storage.get('dorama_shorts_viewed', []) || []), cursor);
       });
     }
@@ -950,7 +966,7 @@
       var rawNext = minShortId(more);
       var ready = dedupeById(filterReadyShots(more));
       if (!ready.length) { done({ items: [], next: rawNext }); return; }
-      resolveShortsLanguages(network, ready, function (langMap) {
+      resolveShortsMeta(network, ready, function (langMap) {
         done({ items: orderShorts(ready, langMap, Lampa.Storage.get('dorama_shorts_viewed', []) || []), next: rawNext });
       });
     });
@@ -1208,7 +1224,7 @@
       _dedupeById: dedupeById,
       _minShortId: minShortId,
       _shortsCardKey: shortsCardKey,
-      _resolveShortsLanguages: resolveShortsLanguages,
+      _resolveShortsMeta: resolveShortsMeta,
       _orderShorts: orderShorts,
       _markShortViewed: markShortViewed,
       _buildShortsFeedData: buildShortsFeedData,
