@@ -983,7 +983,7 @@
 
   function createShortsFeed(items, loadMore) {
     injectShortsCss();
-    var position = 0, loadingMore = false, wheelTime = 0, touchY = null, idleTimer = null;
+    var position = 0, loadingMore = false, wheelTime = 0, touchY = null, idleTimer = null, destroyed = false;
     var root = document.createElement('div');
     root.className = 'dorama-shorts';
     root.innerHTML =
@@ -1061,10 +1061,15 @@
     }
 
     function destroy() {
+      if (destroyed) return;
+      destroyed = true;
       markShortViewed(current().id);
       clearTimeout(idleTimer);
       video.pause();
-      video.src = '';
+      // removeAttribute + load (not src='') — an empty src assignment queues a
+      // late 'error' event that would re-enter the handler below after teardown.
+      video.removeAttribute('src');
+      video.load();
       if (root.parentNode) root.parentNode.removeChild(root);
       Lampa.Controller.toggle('content');
     }
@@ -1074,6 +1079,7 @@
     });
     // A clip whose mp4 404s or can't decode is dropped and skipped over.
     video.addEventListener('error', function () {
+      if (destroyed) return;
       if (items.length <= 1) { destroy(); return; }
       items.splice(position, 1);
       if (position >= items.length) position = items.length - 1;
