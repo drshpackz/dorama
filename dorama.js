@@ -921,6 +921,9 @@
   // sink = Shorts 👎 (sink evicts boost). genreAdj uses ONLY the Shorts store
   // (±0.5 per genre occurrence, clamped ±1.5) — the liked-title tier already
   // carries the main dorama signal, so the profile is not recomputed here.
+  // Genre lookups prefer the current-batch metaMap but fall back to the
+  // persistent Storage cache — taste cards (❤'d earlier) often aren't in the
+  // page batch that triggered this call.
   function buildShortsTaste(metaMap) {
     var t = shortsTasteGet();
     var boost = {}, sink = {}, adj = {}, i, sig;
@@ -928,10 +931,18 @@
     for (i = 0; i < sig.positives.length; i++) boost[sig.positives[i].media + '_' + sig.positives[i].id] = 1;
     for (i = 0; i < t.up.length; i++) boost[t.up[i]] = 1;
     for (i = 0; i < t.down.length; i++) { sink[t.down[i]] = 1; delete boost[t.down[i]]; }
+    var stored = null;
+    function genresOf(key) {
+      var e = metaMap[key];
+      if (e && e.genres && e.genres.length) return e.genres;
+      if (stored === null) stored = Lampa.Storage.get('dorama_shorts_meta', {}) || {};
+      e = stored[key];
+      return (e && e.genres) || [];
+    }
     function apply(list, step) {
       var a, b, gids, g;
       for (a = 0; a < list.length; a++) {
-        gids = (metaMap[list[a]] || {}).genres || [];
+        gids = genresOf(list[a]);
         for (b = 0; b < gids.length; b++) {
           g = gids[b];
           adj[g] = (adj[g] || 0) + step;
@@ -1119,18 +1130,44 @@
 
   // A minimal Lampa card built from CUB shot fields — enough for
   // Favorite.toggle/check and the bookmarks UI (duck-typed like the rest of
-  // the plugin: `name` marks tv, `title` marks movie).
+  // the plugin: `name` marks tv, `title` marks movie). original_language is
+  // filled best-effort from the meta cache so a Shorts ❤ passes the
+  // isAsianDrama gate in collectSignals and feeds the recommendations row.
   function shortsShotCard(shot) {
+    var meta = (Lampa.Storage.get('dorama_shorts_meta', {}) || {})[shortsCardKey(shot)] || {};
+    var card;
     if (shot.card_type === 'tv') {
-      return {
+      card = {
         id: parseInt(shot.card_id, 10), name: shot.card_title || '', original_name: shot.card_title || '',
         poster_path: shot.card_poster || '', first_air_date: shot.card_year || ''
       };
+    } else {
+      card = {
+        id: parseInt(shot.card_id, 10), title: shot.card_title || '', original_title: shot.card_title || '',
+        poster_path: shot.card_poster || '', release_date: shot.card_year || ''
+      };
     }
-    return {
-      id: parseInt(shot.card_id, 10), title: shot.card_title || '', original_title: shot.card_title || '',
-      poster_path: shot.card_poster || '', release_date: shot.card_year || ''
-    };
+    if (meta.lang) card.original_language = meta.lang;
+    return card;
+  }
+
+  // ❤ press: toggle the native like, then mirror the RESULTING state into the
+  // Shorts boost list. Deriving (not blind-toggling) keeps the two in sync
+  // even when the title was liked or unliked outside Shorts.
+  function shortsToggleLike(shot) {
+    var card = shortsShotCard(shot);
+    Lampa.Favorite.toggle('like', card);
+    var liked = false;
+    try { liked = !!((Lampa.Favorite.check(card) || {}).like); } catch (e) {}
+    var key = shortsCardKey(shot);
+    if (liked !== (shortsTasteGet().up.indexOf(key) >= 0)) shortsTasteToggle('up', key);
+    return liked;
+  }
+
+  // classList.toggle's second (force) argument is missing on old TV WebKit —
+  // it would blind-flip there. add/remove works everywhere.
+  function shortsSetClass(el, cls, on) {
+    if (on) el.classList.add(cls); else el.classList.remove(cls);
   }
 
   function createShortsFeed(items, loadMore) {
@@ -1192,7 +1229,7 @@
       var list = focusables(), i;
       if (focusIndex >= list.length) focusIndex = list.length - 1;
       if (focusIndex < 0) focusIndex = 0;
-      for (i = 0; i < list.length; i++) list[i].classList.toggle('focus', i === focusIndex);
+      for (i = 0; i < list.length; i++) shortsSetClass(list[i], 'focus', i === focusIndex);
     }
 
     function moveFocus(dir) {
@@ -1205,11 +1242,11 @@
       var shot = current();
       var key = shortsCardKey(shot);
       var taste = shortsTasteGet();
-      btnLess.classList.toggle('dorama-shorts__btn--active', taste.down.indexOf(key) >= 0);
+      shortsSetClass(btnLess, 'dorama-shorts__btn--active', taste.down.indexOf(key) >= 0);
       if (hasFavorite) {
         var check = Lampa.Favorite.check(shortsShotCard(shot));
-        btnLike.classList.toggle('dorama-shorts__btn--active', !!check.like);
-        btnBook.classList.toggle('dorama-shorts__btn--active', !!check.book);
+        shortsSetClass(btnLike, 'dorama-shorts__btn--active', !!check.like);
+        shortsSetClass(btnBook, 'dorama-shorts__btn--active', !!check.book);
       }
     }
 
@@ -1220,10 +1257,7 @@
       var shot = current();
       var key = shortsCardKey(shot);
       if (act === 'poster') { openCard(); return; }
-      if (act === 'like') {
-        Lampa.Favorite.toggle('like', shortsShotCard(shot));
-        shortsTasteToggle('up', key); // mirror into the Shorts boost list
-      }
+      if (act === 'like') shortsToggleLike(shot);
       if (act === 'book') Lampa.Favorite.toggle('book', shortsShotCard(shot));
       if (act === 'less') shortsTasteToggle('down', key);
       syncButtons();
@@ -1251,12 +1285,17 @@
         span.textContent = tags[i];
         elTags.appendChild(span);
       }
-      elPoster.classList.remove('dorama-shorts__poster--loaded');
       elPoster.classList.remove('dorama-shorts__poster--hidden');
-      if (shot.card_poster && Lampa.Api && Lampa.Api.img) {
-        elPosterImg.src = Lampa.Api.img(shot.card_poster, 'w200');
-      } else {
+      var poster_src = (shot.card_poster && Lampa.Api && Lampa.Api.img) ? Lampa.Api.img(shot.card_poster, 'w200') : '';
+      if (!poster_src) {
         elPoster.classList.add('dorama-shorts__poster--hidden');
+      } else if (elPosterImg.getAttribute('src') === poster_src) {
+        // Same poster as the previous clip (tier 0 groups a title's clips
+        // together) — old WebKit may not refire 'load' on an unchanged src.
+        elPoster.classList.add('dorama-shorts__poster--loaded');
+      } else {
+        elPoster.classList.remove('dorama-shorts__poster--loaded');
+        elPosterImg.src = poster_src;
       }
       focusIndex = 0;
       applyFocus();
@@ -1456,7 +1495,8 @@
       _shortsLoadMore: shortsLoadMore,
       _openShorts: openShorts,
       _addShortsMenuItem: addShortsMenuItem,
-      _shortsShotCard: shortsShotCard
+      _shortsShotCard: shortsShotCard,
+      _shortsToggleLike: shortsToggleLike
     };
   }
 })();

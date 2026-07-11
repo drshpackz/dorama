@@ -420,15 +420,44 @@ test('menu: Shorts item lands right after Дорама', () => {
 });
 
 test('shortsShotCard builds tv and movie card shapes for Favorite', () => {
-  const api = loadPlugin(shortsMock());
+  const mock = shortsMock({ storage: { dorama_shorts_meta: { tv_273160: { lang: 'ko', genres: [18] } } } });
+  const api = loadPlugin(mock);
   const tv = api._shortsShotCard(shot(1, 273160, 'tv', { card_title: 'Красота', card_year: '2026', card_poster: '/p.jpg' }));
   assert.deepStrictEqual(tv, {
     id: 273160, name: 'Красота', original_name: 'Красота',
-    poster_path: '/p.jpg', first_air_date: '2026'
+    poster_path: '/p.jpg', first_air_date: '2026', original_language: 'ko'
   });
   const mv = api._shortsShotCard(shot(2, 99, 'movie', { card_title: 'Фильм', card_year: '2020', card_poster: '' }));
   assert.deepStrictEqual(mv, {
     id: 99, title: 'Фильм', original_title: 'Фильм',
     poster_path: '', release_date: '2020'
   });
+});
+
+test('shortsToggleLike keeps Favorite and the boost list in sync from both start states', () => {
+  // Start: already liked elsewhere (Favorite on, up-list empty) -> press unlikes and up stays empty
+  const pre = shortsMock({ favorites: { like: [{ id: 42, name: 't', original_language: 'ko' }], history: [], viewed: [] } });
+  const api1 = loadPlugin(pre);
+  const s = shot(1, 42, 'tv');
+  assert.strictEqual(api1._shortsToggleLike(s), false, 'unliked');
+  assert.deepStrictEqual(pre.Lampa.Storage.get('dorama_shorts_taste', {}).up || [], [], 'no phantom boost');
+  assert.strictEqual(api1._shortsToggleLike(s), true, 're-liked');
+  assert.deepStrictEqual(pre.Lampa.Storage.get('dorama_shorts_taste', {}).up, ['tv_42']);
+  // Start: fresh (both off) -> like adds both, unlike removes both
+  const fresh = shortsMock();
+  const api2 = loadPlugin(fresh);
+  assert.strictEqual(api2._shortsToggleLike(s), true);
+  assert.deepStrictEqual(fresh.Lampa.Storage.get('dorama_shorts_taste', {}).up, ['tv_42']);
+  assert.strictEqual(api2._shortsToggleLike(s), false);
+  assert.deepStrictEqual(fresh.Lampa.Storage.get('dorama_shorts_taste', {}).up, []);
+});
+
+test('buildShortsTaste reads genres from the persistent cache when absent from the batch', () => {
+  const mock = shortsMock({ storage: {
+    dorama_shorts_taste: { up: ['movie_5'], down: [] },
+    dorama_shorts_meta: { movie_5: { lang: 'ko', genres: [18] } }
+  } });
+  const api = loadPlugin(mock);
+  const taste = api._buildShortsTaste({});
+  assert.strictEqual(taste.genreAdj[18], 0.5, 'genres resolved from Storage cache');
 });
