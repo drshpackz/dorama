@@ -35,6 +35,9 @@ function fire(mock, render, movie) {
 }
 
 const MOVIE = { id: 42, title: 'Test Movie', original_title: 'Test Movie' };
+const DEVICE = { device_id: 'd-tv', uid: 'conn-tv', name: 'Noname - Lampa' };
+
+// ---------- button injection ----------
 
 test('injects one button after .view--online, idempotent on repeat events', () => {
   const mock = makeMock();
@@ -59,39 +62,8 @@ test('falls back to .view--torrent, then to the buttons row', () => {
   assert.strictEqual(intoRow._inserted[0].where, 'row');
 });
 
-test('hover:enter sends the native activity object when Activity.active() is a full page', () => {
-  // Real Broadcast.open reads params.object.card.id — the object must be the
-  // activity object (what Activity.extractObject returns), never the raw movie.
-  const fullActivity = { component: 'full', id: MOVIE.id, method: 'movie', card: MOVIE, source: 'tmdb', activity: { render: function () {} } };
-  const mock = makeMock({ activeActivity: fullActivity });
-  loadPluginFile(mock, 'broadcast.js');
-  const render = fakeRender({ online: true });
-  fire(mock, render, MOVIE);
-  render._inserted[0].btn.trigger('hover:enter');
-  assert.strictEqual(mock.calls.broadcastOpen.length, 1);
-  const sent = mock.calls.broadcastOpen[0];
-  assert.strictEqual(sent.type, 'card');
-  assert.deepStrictEqual(sent.object, { component: 'full', id: MOVIE.id, method: 'movie', card: MOVIE, source: 'tmdb' }, 'activity object with runtime keys stripped');
-});
-
-test('hover:enter falls back to a constructed full-activity object (with .card) when Activity.active() is unavailable', () => {
-  const mock = makeMock(); // no activeActivity → Activity.active() throws
-  loadPluginFile(mock, 'broadcast.js');
-  const render = fakeRender({ online: true });
-  fire(mock, render, MOVIE);
-  render._inserted[0].btn.trigger('hover:enter');
-  assert.strictEqual(mock.calls.broadcastOpen.length, 1);
-  const sent = mock.calls.broadcastOpen[0];
-  assert.strictEqual(sent.type, 'card');
-  assert.strictEqual(sent.object.component, 'full');
-  assert.strictEqual(sent.object.id, MOVIE.id);
-  assert.strictEqual(sent.object.method, 'movie', 'no .name/.number_of_seasons → movie');
-  assert.deepStrictEqual(sent.object.card, MOVIE, 'Broadcast.open dereferences object.card.id');
-  assert.strictEqual(sent.object.source, 'tmdb');
-});
-
-test('no button when Lampa.Broadcast is absent', () => {
-  const mock = makeMock({ noBroadcast: true });
+test('no button when Lampa.Socket is unavailable', () => {
+  const mock = makeMock({ noSocket: true });
   loadPluginFile(mock, 'broadcast.js');
   const render = fakeRender({ online: true });
   fire(mock, render, MOVIE);
@@ -108,7 +80,7 @@ test('no button for a child profile (Account.Permit.child — the signal native 
 
 test('button DOES render on a normal profile even though field() returns truthy "undefined" for unknown keys', () => {
   // Regression: real Params.field returns the STRING 'undefined' for unregistered
-  // keys (e.g. 'parental_control'), which hid the button on every real device.
+  // keys, which hid the button on every real device.
   const mock = makeMock();
   assert.strictEqual(mock.Lampa.Storage.field('parental_control'), 'undefined', 'mock models real field()');
   loadPluginFile(mock, 'broadcast.js');
@@ -139,6 +111,136 @@ test('falls back to legacy Account.logged() when Permit is unavailable', () => {
   assert.strictEqual(render2._inserted.length, 1, 'legacy logged()=true shows the button');
 });
 
+// ---------- picker open/close lifecycle ----------
+
+test('hover:enter opens the picker modal, subscribes to socket messages, polls devices; onBack cleans up', () => {
+  const mock = makeMock();
+  loadPluginFile(mock, 'broadcast.js');
+  const render = fakeRender({ online: true });
+  fire(mock, render, MOVIE);
+  render._inserted[0].btn.trigger('hover:enter');
+
+  assert.strictEqual(mock.calls.modalOpen.length, 1, 'modal opened');
+  assert.strictEqual(mock.calls.socketSend.filter(s => s.method === 'devices').length, 1, 'initial devices poll sent');
+  // one 'message' follower from startPlugin (rename receiver) + one from the picker
+  assert.strictEqual(mock.Lampa.Socket.listener.count('message'), 2, 'picker follows socket messages');
+
+  mock.calls.modalOpen[0].onBack(); // close the picker (also stops the 3s interval)
+  assert.strictEqual(mock.Lampa.Socket.listener.count('message'), 1, 'picker unsubscribed, receiver stays');
+  assert.strictEqual(mock.calls.modalClose, 1, 'modal closed');
+});
+
+test('Modal.open throwing shows a Noty and does not propagate', () => {
+  const mock = makeMock({ modalThrow: true });
+  loadPluginFile(mock, 'broadcast.js');
+  const render = fakeRender({ online: true });
+  fire(mock, render, MOVIE);
+  assert.doesNotThrow(() => render._inserted[0].btn.trigger('hover:enter'));
+  assert.strictEqual(mock.calls.noty.length, 1);
+  assert.ok(mock.calls.noty[0].indexOf('playontv_error') >= 0);
+});
+
+// ---------- cast payload ----------
+
+test('sendOpenTo(): native activity object when Activity.active() is a full page, card shrunk to {id, source}', () => {
+  const fullActivity = { component: 'full', id: MOVIE.id, method: 'movie', card: MOVIE, source: 'tmdb', activity: { render: function () {} } };
+  const mock = makeMock({ activeActivity: fullActivity });
+  const api = loadPluginFile(mock, 'broadcast.js');
+  api._sendOpenTo(DEVICE, MOVIE);
+  const sent = mock.calls.socketSend.filter(s => s.method === 'open');
+  assert.strictEqual(sent.length, 1);
+  assert.strictEqual(sent[0].data.uid, 'conn-tv', 'addressed by connection uid, like native');
+  assert.deepStrictEqual(sent[0].data.params, {
+    component: 'full', id: MOVIE.id, method: 'movie', card: { id: MOVIE.id, source: 'tmdb' }, source: 'tmdb'
+  }, 'runtime keys stripped, card shrunk exactly like native Broadcast');
+});
+
+test('sendOpenTo(): constructed full-activity fallback when Activity.active() is unavailable', () => {
+  const mock = makeMock(); // no activeActivity → Activity.active() throws
+  const api = loadPluginFile(mock, 'broadcast.js');
+  api._sendOpenTo(DEVICE, MOVIE);
+  const sent = mock.calls.socketSend.filter(s => s.method === 'open');
+  assert.strictEqual(sent.length, 1);
+  assert.deepStrictEqual(sent[0].data.params, {
+    component: 'full', id: MOVIE.id, method: 'movie', card: { id: MOVIE.id, source: 'tmdb' }, source: 'tmdb'
+  });
+});
+
+// ---------- device filtering & display names ----------
+
+test('pickerDevices(): excludes CUB and this device, keeps the rest', () => {
+  const mock = makeMock({ socketUid: 'me' });
+  const api = loadPluginFile(mock, 'broadcast.js');
+  const out = api._pickerDevices([
+    { device_id: 'me', uid: 'c0', name: 'Mobile - Lampa' },
+    { device_id: 'x1', uid: 'c1', name: 'CUB' },
+    { device_id: 'x2', uid: 'c2', name: 'Browser - Lampa' },
+    null,
+    { device_id: 'x3', uid: 'c3', name: 'Noname - Lampa' }
+  ]);
+  assert.deepStrictEqual(out.map(d => d.device_id), ['x2', 'x3']);
+});
+
+test('displayName(): local alias wins over the reported name; alias storage tolerates JSON strings', () => {
+  const mock = makeMock({ storage: { playontv_aliases: '{"d-tv":"Гостиная ТВ"}' } });
+  const api = loadPluginFile(mock, 'broadcast.js');
+  assert.strictEqual(api._displayName(DEVICE), 'Гостиная ТВ', 'alias (parsed from JSON string) wins');
+  assert.strictEqual(api._displayName({ device_id: 'other', name: 'Browser - Lampa' }), 'Browser - Lampa', 'no alias → reported name');
+});
+
+test('escapeHtml(): device names are escaped (they are remote-controlled strings)', () => {
+  const mock = makeMock();
+  const api = loadPluginFile(mock, 'broadcast.js');
+  assert.strictEqual(api._escapeHtml('<img src=x onerror=alert(1)>&"'), '&lt;img src=x onerror=alert(1)&gt;&amp;&quot;');
+});
+
+// ---------- rename: sender side ----------
+
+test('renameDeviceDialog(): prefills current name; saves local alias AND sends playontv_rename to the device', () => {
+  const mock = makeMock({ inputValue: '  Кухня ТВ  ' });
+  const api = loadPluginFile(mock, 'broadcast.js');
+  api._renameDeviceDialog(DEVICE);
+
+  assert.strictEqual(mock.calls.inputEdits.length, 1);
+  assert.strictEqual(mock.calls.inputEdits[0].value, 'Noname - Lampa', 'keyboard prefilled with current display name');
+
+  assert.strictEqual(api._displayName(DEVICE), 'Кухня ТВ', 'trimmed alias stored locally');
+
+  const sent = mock.calls.socketSend.filter(s => s.method === 'other');
+  assert.strictEqual(sent.length, 1);
+  assert.deepStrictEqual(sent[0].data, { params: { submethod: 'playontv_rename', name: 'Кухня ТВ' }, uid: 'conn-tv' });
+});
+
+test('renameDeviceDialog(): blank input changes nothing', () => {
+  const mock = makeMock({ inputValue: '   ' });
+  const api = loadPluginFile(mock, 'broadcast.js');
+  api._renameDeviceDialog(DEVICE);
+  assert.strictEqual(api._displayName(DEVICE), 'Noname - Lampa');
+  assert.strictEqual(mock.calls.socketSend.filter(s => s.method === 'other').length, 0);
+});
+
+// ---------- rename: receiver side ----------
+
+test('receiver applies playontv_rename from the socket and confirms with a Noty', () => {
+  const mock = makeMock();
+  loadPluginFile(mock, 'broadcast.js'); // startPlugin subscribes the receiver
+  mock.Lampa.Socket.listener.send('message', { method: 'other', data: { submethod: 'playontv_rename', name: 'Спальня' } });
+  assert.strictEqual(mock.Lampa.Storage.get('device_name'), 'Спальня');
+  assert.strictEqual(mock.calls.noty.length, 1);
+});
+
+test('receiver ignores foreign submethods, other methods, and empty names', () => {
+  const mock = makeMock();
+  loadPluginFile(mock, 'broadcast.js');
+  mock.Lampa.Socket.listener.send('message', { method: 'other', data: { submethod: 'play', object: {} } });
+  mock.Lampa.Socket.listener.send('message', { method: 'devices', data: [] });
+  mock.Lampa.Socket.listener.send('message', { method: 'other', data: { submethod: 'playontv_rename', name: '   ' } });
+  assert.strictEqual(mock.Lampa.Storage.get('device_name'), undefined, 'device_name untouched');
+  assert.strictEqual(mock.calls.noty.length, 0);
+});
+
+// ---------- self rename & row markup ----------
+
 test('deviceName(): falls back to "Lampa" for the truthy "undefined" string, uses stored value otherwise', () => {
   const bare = makeMock();
   const api1 = loadPluginFile(bare, 'broadcast.js');
@@ -164,7 +266,7 @@ test('renameRowHtml(): native-styled selector row with pen icon and current name
   const api = loadPluginFile(mock, 'broadcast.js');
   const html = api._renameRowHtml();
   assert.ok(html.indexOf('broadcast__device') >= 0, 'reuses native row class for focus styling');
-  assert.ok(html.indexOf('broadcast-rename--plugin') >= 0, 'has marker class for idempotent inject');
+  assert.ok(html.indexOf('broadcast-rename--plugin') >= 0, 'has marker class');
   assert.ok(html.indexOf('selector') >= 0);
   assert.ok(html.indexOf('<svg') >= 0, 'has pen icon');
   // Lampa's global CSS is `svg{width:100%;height:100%}` — it overrides svg
@@ -173,14 +275,4 @@ test('renameRowHtml(): native-styled selector row with pen icon and current name
   assert.ok(/style="[^"]*width:\s*1em/.test(svgTag), 'svg width constrained via inline style');
   assert.ok(/style="[^"]*height:\s*1em/.test(svgTag), 'svg height constrained via inline style');
   assert.ok(html.indexOf('Кухня') >= 0, 'shows current device name');
-});
-
-test('Broadcast.open throwing shows a Noty and does not propagate', () => {
-  const mock = makeMock({ broadcastThrow: true });
-  loadPluginFile(mock, 'broadcast.js');
-  const render = fakeRender({ online: true });
-  fire(mock, render, MOVIE);
-  assert.doesNotThrow(() => render._inserted[0].btn.trigger('hover:enter'));
-  assert.strictEqual(mock.calls.noty.length, 1);
-  assert.ok(mock.calls.noty[0].indexOf('playontv_error') >= 0);
 });

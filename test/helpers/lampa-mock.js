@@ -7,8 +7,13 @@ function makeEl(html) {
     _html: html || '',
     _handlers: {},
     _children: [],
+    length: 1,
     on: function (ev, fn) { this._handlers[ev] = fn; return this; },
     append: function (child) { this._children.push(child); return this; },
+    empty: function () { this._children = []; return this; },
+    find: function () { return makeEl(''); },
+    addClass: function () { return this; },
+    removeClass: function () { return this; },
     trigger: function (ev) { if (this._handlers[ev]) this._handlers[ev](); return this; },
     text: function () { var m = /menu__text[^>]*>([^<]*)</.exec(this._html); return m ? m[1] : ''; }
   };
@@ -17,7 +22,7 @@ function makeEl(html) {
 // --- mock factory: returns { Lampa, $, window, calls } ---
 function makeMock(options) {
   options = options || {};
-  var calls = { activityPush: [], componentAdd: {}, listeners: {}, requests: [], clears: 0, empties: [], loaderCalls: [], toggles: 0, favToggles: [], noty: [], broadcastOpen: [] };
+  var calls = { activityPush: [], componentAdd: {}, listeners: {}, requests: [], clears: 0, empties: [], loaderCalls: [], toggles: 0, favToggles: [], noty: [], socketSend: [], modalOpen: [], inputEdits: [] };
 
   var menuList = makeEl('');               // the .menu .menu__list element
   function $(arg) {
@@ -127,11 +132,30 @@ function makeMock(options) {
     // (the same one native Broadcast's head icon checks); Permit.access is the
     // modern "logged in + account enabled" signal (Account.logged() is deprecated).
     Account: { Permit: { child: !!options.childProfile, access: !options.notLogged } },
-    Broadcast: options.noBroadcast ? undefined : {
-      open: function (params) {
-        if (options.broadcastThrow) throw new Error('broadcast failed');
-        calls.broadcastOpen.push(params);
-      }
+    // Models real Lampa Socket (core/socket.js): uid() is this device's stable id,
+    // devices() the last device list, send() attaches account per message, and
+    // every inbound message is fanned out to listener 'message' followers.
+    Socket: options.noSocket ? undefined : (function () {
+      var followers = {};
+      return {
+        uid: function () { return options.socketUid || 'self-uid'; },
+        devices: function () { return options.devices || []; },
+        send: function (method, data) { calls.socketSend.push({ method: method, data: data }); },
+        listener: {
+          follow: function (name, fn) { (followers[name] = followers[name] || []).push(fn); },
+          remove: function (name, fn) { var l = followers[name] || []; var i = l.indexOf(fn); if (i >= 0) l.splice(i, 1); },
+          send: function (name, ev) { var l = (followers[name] || []).slice(); for (var i = 0; i < l.length; i++) l[i](ev); },
+          count: function (name) { return (followers[name] || []).length; }
+        }
+      };
+    })(),
+    Modal: {
+      open: function (params) { if (options.modalThrow) throw new Error('modal failed'); calls.modalOpen.push(params); },
+      close: function () { calls.modalClose = (calls.modalClose || 0) + 1; },
+      toggle: function () {}
+    },
+    Input: {
+      edit: function (opts, cb) { calls.inputEdits.push(opts); if ('inputValue' in options) cb(options.inputValue); }
     },
     Api: { img: function (path, size) { return 'IMG:' + (path || ''); } },
     Favorite: (function () {
