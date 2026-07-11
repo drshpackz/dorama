@@ -874,6 +874,35 @@
     for (i = 0; i < burst; i++) launchNext();
   }
 
+  var SHORTS_ASIAN_FILL = { ja: 1, zh: 1, th: 1 };
+  var SHORTS_VIEWED_MAX = 500;
+
+  // ko clips first, then the Asian filler languages; unknown/other dropped.
+  // Within each group locally-viewed clips sink to the end (they stay watchable
+  // but stop hogging the top of the feed). Incoming order (newest-first from
+  // the API) is preserved inside each bucket.
+  function orderShorts(shots, langMap, viewedIds) {
+    var viewed = {}, i;
+    for (i = 0; i < (viewedIds || []).length; i++) viewed[viewedIds[i]] = 1;
+    var buckets = { koFresh: [], koSeen: [], asianFresh: [], asianSeen: [] };
+    for (i = 0; i < shots.length; i++) {
+      var lang = langMap[shortsCardKey(shots[i])];
+      var isKo = lang === 'ko';
+      if (!isKo && !SHORTS_ASIAN_FILL[lang]) continue;
+      var name = (isKo ? 'ko' : 'asian') + (viewed[shots[i].id] ? 'Seen' : 'Fresh');
+      buckets[name].push(shots[i]);
+    }
+    return buckets.koFresh.concat(buckets.koSeen, buckets.asianFresh, buckets.asianSeen);
+  }
+
+  function markShortViewed(id) {
+    var arr = Lampa.Storage.get('dorama_shorts_viewed', []) || [];
+    if (arr.indexOf(id) >= 0) return;
+    arr.push(id);
+    if (arr.length > SHORTS_VIEWED_MAX) arr = arr.slice(arr.length - SHORTS_VIEWED_MAX);
+    Lampa.Storage.set('dorama_shorts_viewed', arr);
+  }
+
   function start() {
     if (window.dorama_plugin_ready) return; // guard against double init
     window.dorama_plugin_ready = true;
@@ -923,7 +952,9 @@
       _dedupeById: dedupeById,
       _minShortId: minShortId,
       _shortsCardKey: shortsCardKey,
-      _resolveShortsLanguages: resolveShortsLanguages
+      _resolveShortsLanguages: resolveShortsLanguages,
+      _orderShorts: orderShorts,
+      _markShortViewed: markShortViewed
     };
   }
 })();

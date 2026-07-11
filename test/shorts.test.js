@@ -143,3 +143,32 @@ test('resolveShortsLanguages resets an oversized cache', () => {
   api._resolveShortsLanguages(new mock.Lampa.Reguest(), [shot(1, 100, 'tv')], () => {});
   assert.deepStrictEqual(mock.Lampa.Storage.get('dorama_shorts_lang', {}), { tv_100: 'ko' });
 });
+
+test('orderShorts: ko first, then other Asian, others dropped', () => {
+  const api = loadPlugin(shortsMock());
+  const shots = [shot(5, 1, 'tv'), shot(4, 2, 'movie'), shot(3, 3, 'tv'), shot(2, 4, 'movie')];
+  const langMap = { tv_1: 'ja', movie_2: 'ko', tv_3: 'en', movie_4: 'ko' };
+  assert.deepStrictEqual(api._orderShorts(shots, langMap, []).map(s => s.id), [4, 2, 5]);
+});
+
+test('orderShorts sinks viewed clips to the end of their group', () => {
+  const api = loadPlugin(shortsMock());
+  const shots = [shot(9, 1, 'tv'), shot(8, 2, 'tv'), shot(7, 3, 'tv'), shot(6, 4, 'tv')];
+  const langMap = { tv_1: 'ko', tv_2: 'ko', tv_3: 'ja', tv_4: 'ja' };
+  // 9 and 7 are viewed -> each sinks within its own language group
+  assert.deepStrictEqual(api._orderShorts(shots, langMap, [9, 7]).map(s => s.id), [8, 9, 6, 7]);
+});
+
+test('markShortViewed stores unique ids and caps at 500', () => {
+  const mock = shortsMock();
+  const api = loadPlugin(mock);
+  api._markShortViewed(1);
+  api._markShortViewed(1);
+  api._markShortViewed(2);
+  assert.deepStrictEqual(mock.Lampa.Storage.get('dorama_shorts_viewed', []), [1, 2]);
+  for (let i = 10; i < 510; i++) api._markShortViewed(i);
+  const arr = mock.Lampa.Storage.get('dorama_shorts_viewed', []);
+  assert.strictEqual(arr.length, 500);
+  assert.strictEqual(arr.indexOf(1), -1, 'oldest id evicted');
+  assert.ok(arr.indexOf(509) >= 0, 'newest id kept');
+});
