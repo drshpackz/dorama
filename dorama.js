@@ -1089,12 +1089,24 @@
     '.dorama-shorts video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;background:#000}' +
     '.dorama-shorts__progress{position:absolute;left:1em;right:1em;bottom:1em;height:.3em;background:rgba(255,255,255,.3);border-radius:1em;z-index:2}' +
     '.dorama-shorts__progress>div{height:100%;width:0;background:#fff;border-radius:1em}' +
-    '.dorama-shorts__panel{position:absolute;left:0;right:0;bottom:0;padding:1.5em;padding-bottom:2.5em;background:linear-gradient(to top,rgba(0,0,0,.7),rgba(0,0,0,0));transition:opacity .3s;z-index:1}' +
-    '.dorama-shorts--idle .dorama-shorts__panel{opacity:0}' +
+    '.dorama-shorts__panel{position:absolute;left:0;right:0;bottom:0;padding:1.5em;padding-bottom:2.5em;background:linear-gradient(to top,rgba(0,0,0,.75),rgba(0,0,0,0));transition:opacity .3s;z-index:1}' +
+    '.dorama-shorts--idle .dorama-shorts__panel{opacity:.35}' +
+    '.dorama-shorts__card{display:flex;align-items:flex-end}' +
+    '.dorama-shorts__poster{width:6.5em;height:9.5em;border-radius:.4em;overflow:hidden;background:rgba(255,255,255,.1);flex-shrink:0;border:.15em solid transparent}' +
+    '.dorama-shorts__poster img{width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity .3s}' +
+    '.dorama-shorts__poster--loaded img{opacity:1}' +
+    '.dorama-shorts__poster--hidden{display:none}' +
+    '.dorama-shorts__poster.focus{border-color:#fff}' +
+    '.dorama-shorts__info{padding-left:1.2em;min-width:0}' +
     '.dorama-shorts__year{font-size:1em;opacity:.8}' +
     '.dorama-shorts__title{font-size:1.7em;line-height:1.3;margin-top:.2em;text-shadow:0 0 .2em rgba(0,0,0,.5)}' +
     '.dorama-shorts__tags{margin-top:.6em}' +
     '.dorama-shorts__tags span{display:inline-block;background:rgba(0,0,0,.4);border-radius:.4em;padding:.2em .6em;margin-right:.4em;font-size:.9em}' +
+    '.dorama-shorts__actions{margin-top:.8em}' +
+    '.dorama-shorts__btn{display:inline-block;background:rgba(255,255,255,.14);border-radius:2em;padding:.45em 1em;margin-right:.5em;font-size:.95em}' +
+    '.dorama-shorts__btn.focus{background:#fff;color:#000}' +
+    '.dorama-shorts__btn--active{background:rgba(255,255,255,.35)}' +
+    '.dorama-shorts__btn--active.focus{background:#fff}' +
     '.dorama-shorts__hint{position:absolute;right:1.5em;bottom:2.5em;font-size:.85em;opacity:.6;z-index:1}';
 
   function injectShortsCss() {
@@ -1105,6 +1117,22 @@
     document.body.appendChild(style);
   }
 
+  // A minimal Lampa card built from CUB shot fields — enough for
+  // Favorite.toggle/check and the bookmarks UI (duck-typed like the rest of
+  // the plugin: `name` marks tv, `title` marks movie).
+  function shortsShotCard(shot) {
+    if (shot.card_type === 'tv') {
+      return {
+        id: parseInt(shot.card_id, 10), name: shot.card_title || '', original_name: shot.card_title || '',
+        poster_path: shot.card_poster || '', first_air_date: shot.card_year || ''
+      };
+    }
+    return {
+      id: parseInt(shot.card_id, 10), title: shot.card_title || '', original_title: shot.card_title || '',
+      poster_path: shot.card_poster || '', release_date: shot.card_year || ''
+    };
+  }
+
   function createShortsFeed(items, loadMore) {
     injectShortsCss();
     var position = 0, loadingMore = false, wheelTime = 0, touchY = null, idleTimer = null, destroyed = false;
@@ -1113,17 +1141,88 @@
     root.innerHTML =
       '<video autoplay loop playsinline></video>' +
       '<div class="dorama-shorts__panel">' +
+      '<div class="dorama-shorts__card">' +
+      '<div class="dorama-shorts__poster" data-act="poster"><img alt=""></div>' +
+      '<div class="dorama-shorts__info">' +
       '<div class="dorama-shorts__year"></div>' +
       '<div class="dorama-shorts__title"></div>' +
       '<div class="dorama-shorts__tags"></div>' +
+      '<div class="dorama-shorts__actions">' +
+      '<div class="dorama-shorts__btn" data-act="like">❤ Нравится</div>' +
+      '<div class="dorama-shorts__btn" data-act="book">🔖 Позже</div>' +
+      '<div class="dorama-shorts__btn" data-act="less">👎 Меньше такого</div>' +
       '</div>' +
-      '<div class="dorama-shorts__hint">OK — карточка, ↑↓ — ролики</div>' +
+      '</div>' +
+      '</div>' +
+      '</div>' +
+      '<div class="dorama-shorts__hint">OK — выбрать • ←→ — кнопки • ↑↓ — ролики</div>' +
       '<div class="dorama-shorts__progress"><div></div></div>';
     var video = root.querySelector('video');
     var bar = root.querySelector('.dorama-shorts__progress div');
     var elYear = root.querySelector('.dorama-shorts__year');
     var elTitle = root.querySelector('.dorama-shorts__title');
     var elTags = root.querySelector('.dorama-shorts__tags');
+    var elPoster = root.querySelector('.dorama-shorts__poster');
+    var elPosterImg = elPoster.querySelector('img');
+    var btnLike = root.querySelector('[data-act="like"]');
+    var btnBook = root.querySelector('[data-act="book"]');
+    var btnLess = root.querySelector('[data-act="less"]');
+    var hasFavorite = !!(Lampa.Favorite && Lampa.Favorite.toggle && Lampa.Favorite.check);
+    if (!hasFavorite) { btnLike.style.display = 'none'; btnBook.style.display = 'none'; }
+    var focusIndex = 0;
+
+    elPosterImg.onload = function () { elPoster.classList.add('dorama-shorts__poster--loaded'); };
+    elPosterImg.onerror = function () { elPoster.classList.add('dorama-shorts__poster--hidden'); };
+
+    function focusables() {
+      var list = [];
+      if (!elPoster.classList.contains('dorama-shorts__poster--hidden')) list.push(elPoster);
+      if (hasFavorite) { list.push(btnLike); list.push(btnBook); }
+      list.push(btnLess);
+      return list;
+    }
+
+    function applyFocus() {
+      var list = focusables(), i;
+      if (focusIndex >= list.length) focusIndex = list.length - 1;
+      if (focusIndex < 0) focusIndex = 0;
+      for (i = 0; i < list.length; i++) list[i].classList.toggle('focus', i === focusIndex);
+    }
+
+    function moveFocus(dir) {
+      focusIndex += dir;
+      applyFocus();
+      wake();
+    }
+
+    function syncButtons() {
+      var shot = current();
+      var key = shortsCardKey(shot);
+      var taste = shortsTasteGet();
+      btnLess.classList.toggle('dorama-shorts__btn--active', taste.down.indexOf(key) >= 0);
+      if (hasFavorite) {
+        var check = Lampa.Favorite.check(shortsShotCard(shot));
+        btnLike.classList.toggle('dorama-shorts__btn--active', !!check.like);
+        btnBook.classList.toggle('dorama-shorts__btn--active', !!check.book);
+      }
+    }
+
+    function activate() {
+      var list = focusables();
+      var el = list[focusIndex] || list[0];
+      var act = el ? el.getAttribute('data-act') : 'poster';
+      var shot = current();
+      var key = shortsCardKey(shot);
+      if (act === 'poster') { openCard(); return; }
+      if (act === 'like') {
+        Lampa.Favorite.toggle('like', shortsShotCard(shot));
+        shortsTasteToggle('up', key); // mirror into the Shorts boost list
+      }
+      if (act === 'book') Lampa.Favorite.toggle('book', shortsShotCard(shot));
+      if (act === 'less') shortsTasteToggle('down', key);
+      syncButtons();
+      wake();
+    }
 
     function current() { return items[position]; }
 
@@ -1146,6 +1245,16 @@
         span.textContent = tags[i];
         elTags.appendChild(span);
       }
+      elPoster.classList.remove('dorama-shorts__poster--loaded');
+      elPoster.classList.remove('dorama-shorts__poster--hidden');
+      if (shot.card_poster && Lampa.Api && Lampa.Api.img) {
+        elPosterImg.src = Lampa.Api.img(shot.card_poster, 'w200');
+      } else {
+        elPoster.classList.add('dorama-shorts__poster--hidden');
+      }
+      focusIndex = 0;
+      applyFocus();
+      syncButtons();
       bar.style.width = '0%';
       video.poster = shot.screen || '';
       video.src = shot.file;
@@ -1233,11 +1342,23 @@
       toggle: function () { wake(); },
       up: function () { move(-1); },
       down: function () { move(1); },
-      left: function () { wake(); },
-      right: function () { wake(); },
-      enter: openCard,
+      left: function () { moveFocus(-1); },
+      right: function () { moveFocus(1); },
+      enter: activate,
       back: destroy
     });
+    var clickables = [elPoster, btnLike, btnBook, btnLess], ci;
+    for (ci = 0; ci < clickables.length; ci++) {
+      (function (el) {
+        el.addEventListener('click', function (e) {
+          e.stopPropagation();
+          var list = focusables(), k;
+          for (k = 0; k < list.length; k++) if (list[k] === el) focusIndex = k;
+          applyFocus();
+          activate();
+        });
+      })(clickables[ci]);
+    }
     document.body.appendChild(root);
     show(current());
     Lampa.Controller.toggle('dorama_shorts');
@@ -1318,7 +1439,8 @@
       _buildShortsFeedData: buildShortsFeedData,
       _shortsLoadMore: shortsLoadMore,
       _openShorts: openShorts,
-      _addShortsMenuItem: addShortsMenuItem
+      _addShortsMenuItem: addShortsMenuItem,
+      _shortsShotCard: shortsShotCard
     };
   }
 })();

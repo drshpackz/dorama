@@ -418,3 +418,17 @@ test('menu: Shorts item lands right after Дорама', () => {
   const texts = mock.menuList._children.map(c => c.text());
   assert.deepStrictEqual(texts, ['Дорама', 'Shorts']);
 });
+
+test('shortsShotCard builds tv and movie card shapes for Favorite', () => {
+  const api = loadPlugin(shortsMock());
+  const tv = api._shortsShotCard(shot(1, 273160, 'tv', { card_title: 'Красота', card_year: '2026', card_poster: '/p.jpg' }));
+  assert.deepStrictEqual(tv, {
+    id: 273160, name: 'Красота', original_name: 'Красота',
+    poster_path: '/p.jpg', first_air_date: '2026'
+  });
+  const mv = api._shortsShotCard(shot(2, 99, 'movie', { card_title: 'Фильм', card_year: '2020', card_poster: '' }));
+  assert.deepStrictEqual(mv, {
+    id: 99, title: 'Фильм', original_title: 'Фильм',
+    poster_path: '', release_date: '2020'
+  });
+});
