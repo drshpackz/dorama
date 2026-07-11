@@ -948,24 +948,52 @@
   var SHORTS_ASIAN_FILL = { ja: 1, zh: 1, th: 1 };
   var SHORTS_VIEWED_MAX = 500;
 
-  // ko clips first, then the Asian filler languages; unknown/other dropped.
-  // Within each group locally-viewed clips sink to the end (they stay watchable
-  // but stop hogging the top of the feed). Incoming order (newest-first from
-  // the API) is preserved inside each bucket.
-  function orderShorts(shots, langMap, viewedIds) {
-    var viewed = {}, i;
+  // Taste-tiered ordering, language grouping ko-first as the outer rule:
+  // 0) boosted cards' clips, 1) ko with genre score > 0 (score desc),
+  // 2) ko rest, 3) asian (ja/zh/th) score > 0, 4) asian rest,
+  // 5) sunk cards' clips dead last (sink beats boost, defensively).
+  // Viewed clips sink WITHIN their tier; incoming order is preserved on ties
+  // via an index tie-break — Array.sort stability is not guaranteed on old
+  // TV engines. Unknown languages are dropped.
+  function orderShortsV2(shots, metaMap, viewedIds, taste) {
+    taste = taste || {};
+    var boost = taste.boostCards || {}, sink = taste.sinkCards || {}, adj = taste.genreAdj || {};
+    var viewed = {}, i, j;
     for (i = 0; i < (viewedIds || []).length; i++) viewed[viewedIds[i]] = 1;
-    var buckets = { koFresh: [], koSeen: [], asianFresh: [], asianSeen: [] };
+    var fresh = [[], [], [], [], [], []];
+    var seen = [[], [], [], [], [], []];
     for (i = 0; i < shots.length; i++) {
-      // Transitional: accepts the old string map and the new meta-entry map.
-      var entry = langMap[shortsCardKey(shots[i])];
-      var lang = entry && entry.lang ? entry.lang : entry;
+      var key = shortsCardKey(shots[i]);
+      var entry = metaMap[key] || {};
+      var lang = entry.lang;
       var isKo = lang === 'ko';
       if (!isKo && !SHORTS_ASIAN_FILL[lang]) continue;
-      var name = (isKo ? 'ko' : 'asian') + (viewed[shots[i].id] ? 'Seen' : 'Fresh');
-      buckets[name].push(shots[i]);
+      var gids = entry.genres || [], score = 0;
+      for (j = 0; j < gids.length; j++) score += adj[gids[j]] || 0;
+      var tier;
+      if (sink[key]) tier = 5;
+      else if (boost[key]) tier = 0;
+      else if (isKo) tier = score > 0 ? 1 : 2;
+      else tier = score > 0 ? 3 : 4;
+      (viewed[shots[i].id] ? seen : fresh)[tier].push({ s: score, v: shots[i] });
     }
-    return buckets.koFresh.concat(buckets.koSeen, buckets.asianFresh, buckets.asianSeen);
+    function flatten(list, sortByScore) {
+      if (sortByScore) {
+        var dec = [], k;
+        for (k = 0; k < list.length; k++) dec.push({ s: list[k].s, i: k, v: list[k].v });
+        dec.sort(function (a, b) { return b.s - a.s || a.i - b.i; });
+        list = dec;
+      }
+      var out = [], m;
+      for (m = 0; m < list.length; m++) out.push(list[m].v);
+      return out;
+    }
+    var result = [], t;
+    for (t = 0; t < 6; t++) {
+      var scored = (t === 1 || t === 3);
+      result = result.concat(flatten(fresh[t], scored), flatten(seen[t], scored));
+    }
+    return result;
   }
 
   function markShortViewed(id) {
@@ -1007,8 +1035,8 @@
     }
     function finish(acc) {
       if (!acc.length) { done([], cursor); return; }
-      resolveShortsMeta(network, acc, function (langMap) {
-        done(orderShorts(acc, langMap, Lampa.Storage.get('dorama_shorts_viewed', []) || []), cursor);
+      resolveShortsMeta(network, acc, function (metaMap) {
+        done(orderShortsV2(acc, metaMap, Lampa.Storage.get('dorama_shorts_viewed', []) || [], buildShortsTaste(metaMap)), cursor);
       });
     }
   }
@@ -1023,8 +1051,8 @@
       var rawNext = minShortId(more);
       var ready = dedupeById(filterReadyShots(more));
       if (!ready.length) { done({ items: [], next: rawNext }); return; }
-      resolveShortsMeta(network, ready, function (langMap) {
-        done({ items: orderShorts(ready, langMap, Lampa.Storage.get('dorama_shorts_viewed', []) || []), next: rawNext });
+      resolveShortsMeta(network, ready, function (metaMap) {
+        done({ items: orderShortsV2(ready, metaMap, Lampa.Storage.get('dorama_shorts_viewed', []) || [], buildShortsTaste(metaMap)), next: rawNext });
       });
     });
   }
@@ -1285,7 +1313,7 @@
       _shortsTasteGet: shortsTasteGet,
       _shortsTasteToggle: shortsTasteToggle,
       _buildShortsTaste: buildShortsTaste,
-      _orderShorts: orderShorts,
+      _orderShortsV2: orderShortsV2,
       _markShortViewed: markShortViewed,
       _buildShortsFeedData: buildShortsFeedData,
       _shortsLoadMore: shortsLoadMore,

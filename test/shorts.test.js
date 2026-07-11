@@ -163,19 +163,53 @@ test('resolveShortsMeta resets an oversized cache', () => {
     { tv_100: { lang: 'ko', genres: [] } });
 });
 
-test('orderShorts: ko first, then other Asian, others dropped', () => {
+test('orderShortsV2 with empty taste keeps the v1 order (ko, asian, viewed sink)', () => {
   const api = loadPlugin(shortsMock());
-  const shots = [shot(5, 1, 'tv'), shot(4, 2, 'movie'), shot(3, 3, 'tv'), shot(2, 4, 'movie')];
-  const langMap = { tv_1: 'ja', movie_2: 'ko', tv_3: 'en', movie_4: 'ko' };
-  assert.deepStrictEqual(api._orderShorts(shots, langMap, []).map(s => s.id), [4, 2, 5]);
+  const shots = [shot(9, 1, 'tv'), shot(8, 2, 'tv'), shot(7, 3, 'tv'), shot(6, 4, 'tv'), shot(5, 5, 'movie')];
+  const metaMap = {
+    tv_1: { lang: 'ko', genres: [] }, tv_2: { lang: 'ko', genres: [] },
+    tv_3: { lang: 'ja', genres: [] }, tv_4: { lang: 'ja', genres: [] },
+    movie_5: { lang: 'en', genres: [] }
+  };
+  const empty = { boostCards: {}, sinkCards: {}, genreAdj: {} };
+  assert.deepStrictEqual(api._orderShortsV2(shots, metaMap, [9, 7], empty).map(s => s.id),
+    [8, 9, 6, 7], 'en dropped; viewed 9/7 sink within their language groups');
 });
 
-test('orderShorts sinks viewed clips to the end of their group', () => {
+test('orderShortsV2 tiers: boost > ko-scored > ko-rest > asian > sink', () => {
   const api = loadPlugin(shortsMock());
-  const shots = [shot(9, 1, 'tv'), shot(8, 2, 'tv'), shot(7, 3, 'tv'), shot(6, 4, 'tv')];
-  const langMap = { tv_1: 'ko', tv_2: 'ko', tv_3: 'ja', tv_4: 'ja' };
-  // 9 and 7 are viewed -> each sinks within its own language group
-  assert.deepStrictEqual(api._orderShorts(shots, langMap, [9, 7]).map(s => s.id), [8, 9, 6, 7]);
+  const shots = [
+    shot(100, 1, 'tv'),   // ko, no genre match      -> tier 2
+    shot(99, 2, 'tv'),    // ko, genre 18 (adj +1)   -> tier 1
+    shot(98, 3, 'movie'), // boosted card            -> tier 0
+    shot(97, 4, 'tv'),    // ja                      -> tier 4
+    shot(96, 5, 'tv'),    // sunk card (ko)          -> tier 5
+    shot(95, 6, 'tv')     // ko, genre 53 (adj +0.5) -> tier 1, below id 99
+  ];
+  const metaMap = {
+    tv_1: { lang: 'ko', genres: [99] },
+    tv_2: { lang: 'ko', genres: [18] },
+    movie_3: { lang: 'ko', genres: [] },
+    tv_4: { lang: 'ja', genres: [] },
+    tv_5: { lang: 'ko', genres: [] },
+    tv_6: { lang: 'ko', genres: [53] }
+  };
+  const taste = { boostCards: { movie_3: 1 }, sinkCards: { tv_5: 1 }, genreAdj: { 18: 1.0, 53: 0.5 } };
+  assert.deepStrictEqual(api._orderShortsV2(shots, metaMap, [], taste).map(s => s.id),
+    [98, 99, 95, 100, 97, 96]);
+});
+
+test('orderShortsV2: sink beats boost; equal scores keep incoming order', () => {
+  const api = loadPlugin(shortsMock());
+  const shots = [shot(10, 1, 'tv'), shot(9, 2, 'tv'), shot(8, 3, 'tv')];
+  const metaMap = {
+    tv_1: { lang: 'ko', genres: [18] },
+    tv_2: { lang: 'ko', genres: [18] },
+    tv_3: { lang: 'ko', genres: [] }
+  };
+  const taste = { boostCards: { tv_3: 1 }, sinkCards: { tv_3: 1 }, genreAdj: { 18: 0.5 } };
+  assert.deepStrictEqual(api._orderShortsV2(shots, metaMap, [], taste).map(s => s.id),
+    [10, 9, 8], 'tv_3 sunk despite boost; 10 before 9 (same score, incoming order)');
 });
 
 test('markShortViewed stores unique ids and caps at 500', () => {
