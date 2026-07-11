@@ -821,6 +821,59 @@
     return min;
   }
 
+  function shortsCardKey(shot) {
+    return (shot.card_type === 'tv' ? 'tv' : 'movie') + '_' + shot.card_id;
+  }
+
+  var SHORTS_LANG_CACHE_MAX = 500;
+  var SHORTS_LOOKUP_CONCURRENCY = 4;
+
+  // done(langMap): cardKey -> original_language. A title's language never
+  // changes, so the Storage cache has no TTL — only a size guard.
+  function resolveShortsLanguages(network, shots, done) {
+    var cache = Lampa.Storage.get('dorama_shorts_lang', {}) || {};
+    var map = {}, pending = [], seen = {}, i, key;
+    for (i = 0; i < shots.length; i++) {
+      key = shortsCardKey(shots[i]);
+      if (cache[key]) map[key] = cache[key];
+      else if (!seen[key]) {
+        seen[key] = 1;
+        pending.push({ key: key, path: (shots[i].card_type === 'tv' ? 'tv/' : 'movie/') + shots[i].card_id });
+      }
+    }
+    if (!pending.length) { done(map); return; }
+    var launched = 0, finished = 0, dirty = false;
+    function finish() {
+      if (dirty) {
+        var count = 0, k;
+        for (k in cache) count++;
+        if (count > SHORTS_LANG_CACHE_MAX) {
+          cache = {};
+          for (k in map) cache[k] = map[k];
+        }
+        Lampa.Storage.set('dorama_shorts_lang', cache);
+      }
+      done(map);
+    }
+    function settle(item, lang) {
+      if (lang) { map[item.key] = lang; cache[item.key] = lang; dirty = true; }
+      finished++;
+      if (finished >= pending.length) { finish(); return; }
+      launchNext();
+    }
+    function launchNext() {
+      if (launched >= pending.length) return;
+      var item = pending[launched++];
+      network.silent(tmdbUrl(item.path), function (json) {
+        settle(item, json && json.original_language);
+      }, function () {
+        settle(item, null);
+      });
+    }
+    var burst = Math.min(SHORTS_LOOKUP_CONCURRENCY, pending.length);
+    for (i = 0; i < burst; i++) launchNext();
+  }
+
   function start() {
     if (window.dorama_plugin_ready) return; // guard against double init
     window.dorama_plugin_ready = true;
@@ -868,7 +921,9 @@
       _fetchLenta: fetchLenta,
       _filterReadyShots: filterReadyShots,
       _dedupeById: dedupeById,
-      _minShortId: minShortId
+      _minShortId: minShortId,
+      _shortsCardKey: shortsCardKey,
+      _resolveShortsLanguages: resolveShortsLanguages
     };
   }
 })();

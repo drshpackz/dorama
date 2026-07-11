@@ -102,3 +102,44 @@ test('dedupeById keeps first occurrence, minShortId finds the smallest id', () =
   assert.deepStrictEqual(api._dedupeById(list).map(s => s.id), [5, 3]);
   assert.strictEqual(api._minShortId(list), 3);
 });
+
+test('resolveShortsLanguages fetches unknown cards once and caches them', () => {
+  const mock = shortsMock({ langs: { 'tv/100': 'ko', 'movie/200': 'ja' } });
+  const api = loadPlugin(mock);
+  const shots = [shot(1, 100, 'tv'), shot(2, 100, 'tv'), shot(3, 200, 'movie')];
+  let map;
+  api._resolveShortsLanguages(new mock.Lampa.Reguest(), shots, m => { map = m; });
+  assert.strictEqual(map.tv_100, 'ko');
+  assert.strictEqual(map.movie_200, 'ja');
+  const tmdbCalls = mock.calls.requests.filter(u => u.indexOf('themoviedb.org') >= 0);
+  assert.strictEqual(tmdbCalls.length, 2, 'one lookup per unique card');
+  assert.deepStrictEqual(mock.Lampa.Storage.get('dorama_shorts_lang', {}),
+    { tv_100: 'ko', movie_200: 'ja' });
+});
+
+test('resolveShortsLanguages serves cached cards without TMDB requests', () => {
+  const mock = shortsMock({ storage: { dorama_shorts_lang: { tv_100: 'ko' } } });
+  const api = loadPlugin(mock);
+  let map;
+  api._resolveShortsLanguages(new mock.Lampa.Reguest(), [shot(1, 100, 'tv')], m => { map = m; });
+  assert.strictEqual(map.tv_100, 'ko');
+  assert.strictEqual(mock.calls.requests.filter(u => u.indexOf('themoviedb.org') >= 0).length, 0);
+});
+
+test('resolveShortsLanguages excludes failed lookups and does not cache them', () => {
+  const mock = shortsMock({ langs: {} }); // every TMDB lookup 404s
+  const api = loadPlugin(mock);
+  let map;
+  api._resolveShortsLanguages(new mock.Lampa.Reguest(), [shot(1, 100, 'tv')], m => { map = m; });
+  assert.strictEqual(map.tv_100, undefined);
+  assert.deepStrictEqual(mock.Lampa.Storage.get('dorama_shorts_lang', {}), {});
+});
+
+test('resolveShortsLanguages resets an oversized cache', () => {
+  const big = {};
+  for (let i = 0; i < 501; i++) big['movie_' + i] = 'fr';
+  const mock = shortsMock({ storage: { dorama_shorts_lang: big }, langs: { 'tv/100': 'ko' } });
+  const api = loadPlugin(mock);
+  api._resolveShortsLanguages(new mock.Lampa.Reguest(), [shot(1, 100, 'tv')], () => {});
+  assert.deepStrictEqual(mock.Lampa.Storage.get('dorama_shorts_lang', {}), { tv_100: 'ko' });
+});
