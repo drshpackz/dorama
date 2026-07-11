@@ -15,7 +15,7 @@ test('on ready: registers component and injects a Дорама menu item', () =>
   loadPlugin(mock);
   mock.calls.listeners.app({ type: 'ready' });
   assert.strictEqual(typeof mock.calls.componentAdd.dorama, 'function');
-  assert.strictEqual(mock.menuList._children.length, 1);
+  assert.strictEqual(mock.menuList._children.length, 2);
   const item = mock.menuList._children[0];
   assert.strictEqual(item.text(), 'Дорама');
   assert.match(item._html, /data-action="dorama"/);
@@ -37,7 +37,7 @@ test('starts immediately when appready is already true', () => {
   const mock = makeMock();
   mock.Lampa.appready = true;
   loadPlugin(mock);
-  assert.strictEqual(mock.menuList._children.length, 1);
+  assert.strictEqual(mock.menuList._children.length, 2);
 });
 
 test('start() is idempotent — a second app:ready does not double-inject', () => {
@@ -45,5 +45,5 @@ test('start() is idempotent — a second app:ready does not double-inject', () =
   loadPlugin(mock);
   mock.calls.listeners.app({ type: 'ready' });
   mock.calls.listeners.app({ type: 'ready' }); // fire ready again
-  assert.strictEqual(mock.menuList._children.length, 1);
+  assert.strictEqual(mock.menuList._children.length, 2);
 });

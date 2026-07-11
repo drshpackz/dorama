@@ -874,11 +874,296 @@
     for (i = 0; i < burst; i++) launchNext();
   }
 
+  var SHORTS_ASIAN_FILL = { ja: 1, zh: 1, th: 1 };
+  var SHORTS_VIEWED_MAX = 500;
+
+  // ko clips first, then the Asian filler languages; unknown/other dropped.
+  // Within each group locally-viewed clips sink to the end (they stay watchable
+  // but stop hogging the top of the feed). Incoming order (newest-first from
+  // the API) is preserved inside each bucket.
+  function orderShorts(shots, langMap, viewedIds) {
+    var viewed = {}, i;
+    for (i = 0; i < (viewedIds || []).length; i++) viewed[viewedIds[i]] = 1;
+    var buckets = { koFresh: [], koSeen: [], asianFresh: [], asianSeen: [] };
+    for (i = 0; i < shots.length; i++) {
+      var lang = langMap[shortsCardKey(shots[i])];
+      var isKo = lang === 'ko';
+      if (!isKo && !SHORTS_ASIAN_FILL[lang]) continue;
+      var name = (isKo ? 'ko' : 'asian') + (viewed[shots[i].id] ? 'Seen' : 'Fresh');
+      buckets[name].push(shots[i]);
+    }
+    return buckets.koFresh.concat(buckets.koSeen, buckets.asianFresh, buckets.asianSeen);
+  }
+
+  function markShortViewed(id) {
+    var arr = Lampa.Storage.get('dorama_shorts_viewed', []) || [];
+    if (arr.indexOf(id) >= 0) return;
+    arr.push(id);
+    if (arr.length > SHORTS_VIEWED_MAX) arr = arr.slice(arr.length - SHORTS_VIEWED_MAX);
+    Lampa.Storage.set('dorama_shorts_viewed', arr);
+  }
+
+  var SHORTS_PAGE_LIMIT = 50;
+  var SHORTS_EXTRA_PAGES = 2;
+
+  // done(items, cursor): the final ordered feed and the smallest RAW id seen
+  // across all fetched pages (or null if page 1 was empty). done(null) only
+  // when the very first request can't reach any mirror; a failed DEEPER page
+  // just stops the walk. The cursor is tracked over RAW pages (before
+  // readiness/language filtering) so a page whose items all get filtered out
+  // still advances the pager instead of getting the walk stuck re-fetching it.
+  function buildShortsFeedData(network, done) {
+    var cursor = null;
+    function track(page) {
+      if (!page || !page.length) return;
+      var m = minShortId(page);
+      if (cursor === null || m < cursor) cursor = m;
+    }
+    fetchLenta(network, { sort: 'new', page: 1, limit: SHORTS_PAGE_LIMIT }, function (first) {
+      if (first === null) { done(null); return; }
+      track(first);
+      walk(SHORTS_EXTRA_PAGES, dedupeById(filterReadyShots(first)));
+    });
+    function walk(left, acc) {
+      if (left <= 0 || !acc.length) { finish(acc); return; }
+      fetchLenta(network, { sort: 'from_id', id: cursor, limit: SHORTS_PAGE_LIMIT }, function (more) {
+        if (!more || !more.length) { finish(acc); return; }
+        track(more);
+        walk(left - 1, dedupeById(acc.concat(filterReadyShots(more))));
+      });
+    }
+    function finish(acc) {
+      if (!acc.length) { done([], cursor); return; }
+      resolveShortsLanguages(network, acc, function (langMap) {
+        done(orderShorts(acc, langMap, Lampa.Storage.get('dorama_shorts_viewed', []) || []), cursor);
+      });
+    }
+  }
+
+  // One deeper history page for feed paging. done({ items: [], next: null })
+  // on an exhausted/failed page. next is always the RAW page's smallest id
+  // (even when items filters down to []) so the cursor keeps advancing instead
+  // of dead-ending on a page with no Asian clips.
+  function shortsLoadMore(network, lastId, done) {
+    fetchLenta(network, { sort: 'from_id', id: lastId, limit: SHORTS_PAGE_LIMIT }, function (more) {
+      if (!more || !more.length) { done({ items: [], next: null }); return; }
+      var rawNext = minShortId(more);
+      var ready = dedupeById(filterReadyShots(more));
+      if (!ready.length) { done({ items: [], next: rawNext }); return; }
+      resolveShortsLanguages(network, ready, function (langMap) {
+        done({ items: orderShorts(ready, langMap, Lampa.Storage.get('dorama_shorts_viewed', []) || []), next: rawNext });
+      });
+    });
+  }
+
+  function openShorts(feedFactory) {
+    var factory = feedFactory || createShortsFeed;
+    var network = new Lampa.Reguest();
+    if (Lampa.Loading && Lampa.Loading.start) Lampa.Loading.start(function () { network.clear(); });
+    buildShortsFeedData(network, function (items, cursor) {
+      if (Lampa.Loading && Lampa.Loading.stop) Lampa.Loading.stop();
+      if (items === null) {
+        if (Lampa.Noty && Lampa.Noty.show) Lampa.Noty.show('Shorts: сервер недоступен, попробуйте позже');
+        return;
+      }
+      if (!items.length) {
+        if (Lampa.Noty && Lampa.Noty.show) Lampa.Noty.show('Пока нет коротких роликов по дорамам');
+        return;
+      }
+      var exhausted = !cursor;
+      factory(items, function (cb) {
+        if (exhausted) { cb([]); return; }
+        shortsLoadMore(network, cursor, function (result) {
+          if (result.next && result.next < cursor) cursor = result.next;
+          else exhausted = true;
+          cb(result.items);
+        });
+      });
+    });
+  }
+
+  var SHORTS_CSS_ID = 'dorama-shorts-css';
+  var SHORTS_CSS =
+    '.dorama-shorts{position:fixed;left:0;top:0;width:100%;height:100%;z-index:500;background:#000}' +
+    '.dorama-shorts video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;background:#000}' +
+    '.dorama-shorts__progress{position:absolute;left:1em;right:1em;bottom:1em;height:.3em;background:rgba(255,255,255,.3);border-radius:1em;z-index:2}' +
+    '.dorama-shorts__progress>div{height:100%;width:0;background:#fff;border-radius:1em}' +
+    '.dorama-shorts__panel{position:absolute;left:0;right:0;bottom:0;padding:1.5em;padding-bottom:2.5em;background:linear-gradient(to top,rgba(0,0,0,.7),rgba(0,0,0,0));transition:opacity .3s;z-index:1}' +
+    '.dorama-shorts--idle .dorama-shorts__panel{opacity:0}' +
+    '.dorama-shorts__year{font-size:1em;opacity:.8}' +
+    '.dorama-shorts__title{font-size:1.7em;line-height:1.3;margin-top:.2em;text-shadow:0 0 .2em rgba(0,0,0,.5)}' +
+    '.dorama-shorts__tags{margin-top:.6em}' +
+    '.dorama-shorts__tags span{display:inline-block;background:rgba(0,0,0,.4);border-radius:.4em;padding:.2em .6em;margin-right:.4em;font-size:.9em}' +
+    '.dorama-shorts__hint{position:absolute;right:1.5em;bottom:2.5em;font-size:.85em;opacity:.6;z-index:1}';
+
+  function injectShortsCss() {
+    if (document.getElementById(SHORTS_CSS_ID)) return;
+    var style = document.createElement('style');
+    style.id = SHORTS_CSS_ID;
+    style.textContent = SHORTS_CSS;
+    document.body.appendChild(style);
+  }
+
+  function createShortsFeed(items, loadMore) {
+    injectShortsCss();
+    var position = 0, loadingMore = false, wheelTime = 0, touchY = null, idleTimer = null, destroyed = false;
+    var root = document.createElement('div');
+    root.className = 'dorama-shorts';
+    root.innerHTML =
+      '<video autoplay loop playsinline></video>' +
+      '<div class="dorama-shorts__panel">' +
+      '<div class="dorama-shorts__year"></div>' +
+      '<div class="dorama-shorts__title"></div>' +
+      '<div class="dorama-shorts__tags"></div>' +
+      '</div>' +
+      '<div class="dorama-shorts__hint">OK — карточка, ↑↓ — ролики</div>' +
+      '<div class="dorama-shorts__progress"><div></div></div>';
+    var video = root.querySelector('video');
+    var bar = root.querySelector('.dorama-shorts__progress div');
+    var elYear = root.querySelector('.dorama-shorts__year');
+    var elTitle = root.querySelector('.dorama-shorts__title');
+    var elTags = root.querySelector('.dorama-shorts__tags');
+
+    function current() { return items[position]; }
+
+    function wake() {
+      root.classList.remove('dorama-shorts--idle');
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(function () { root.classList.add('dorama-shorts--idle'); }, 5000);
+    }
+
+    function show(shot) {
+      elYear.textContent = shot.card_year || '';
+      elTitle.textContent = shot.card_title || '';
+      var tags = [];
+      if (shot.season) tags.push('S-' + shot.season);
+      if (shot.episode) tags.push('E-' + shot.episode);
+      if (shot.voice_name) tags.push(shot.voice_name);
+      elTags.innerHTML = '';
+      for (var i = 0; i < tags.length; i++) {
+        var span = document.createElement('span');
+        span.textContent = tags[i];
+        elTags.appendChild(span);
+      }
+      bar.style.width = '0%';
+      video.poster = shot.screen || '';
+      video.src = shot.file;
+      var p = video.play();
+      if (p && p['catch']) p['catch'](function () {});
+      wake();
+    }
+
+    function move(dir) {
+      var next = position + dir;
+      if (next < 0 || next >= items.length) { wake(); return; }
+      markShortViewed(current().id);
+      position = next;
+      show(current());
+      if (position >= items.length - 3 && !loadingMore) {
+        loadingMore = true;
+        loadMore(function (more) {
+          loadingMore = false;
+          for (var i = 0; i < more.length; i++) {
+            var dupe = false;
+            for (var j = 0; j < items.length; j++) if (items[j].id === more[i].id) { dupe = true; break; }
+            if (!dupe) items.push(more[i]);
+          }
+        });
+      }
+    }
+
+    function openCard() {
+      var shot = current();
+      destroy();
+      Lampa.Activity.push({
+        component: 'full', source: 'tmdb',
+        id: parseInt(shot.card_id, 10),
+        method: shot.card_type === 'tv' ? 'tv' : 'movie',
+        card: { id: parseInt(shot.card_id, 10) }
+      });
+    }
+
+    function destroy() {
+      if (destroyed) return;
+      destroyed = true;
+      markShortViewed(current().id);
+      clearTimeout(idleTimer);
+      video.pause();
+      // removeAttribute + load (not src='') — an empty src assignment queues a
+      // late 'error' event that would re-enter the handler below after teardown.
+      video.removeAttribute('src');
+      video.load();
+      if (root.parentNode) root.parentNode.removeChild(root);
+      Lampa.Controller.toggle('content');
+    }
+
+    video.addEventListener('timeupdate', function () {
+      if (video.duration) bar.style.width = (video.currentTime / video.duration * 100) + '%';
+    });
+    // A clip whose mp4 404s or can't decode is dropped and skipped over.
+    video.addEventListener('error', function () {
+      if (destroyed) return;
+      if (items.length <= 1) { destroy(); return; }
+      items.splice(position, 1);
+      if (position >= items.length) position = items.length - 1;
+      show(current());
+    });
+    root.addEventListener('wheel', function (e) {
+      if (Date.now() - wheelTime < 500) return;
+      wheelTime = Date.now();
+      move(e.deltaY > 0 ? 1 : -1);
+    });
+    root.addEventListener('touchstart', function (e) {
+      touchY = (e.touches[0] || e.changedTouches[0]).clientY;
+    });
+    root.addEventListener('touchend', function (e) {
+      if (touchY === null) return;
+      var dy = touchY - (e.changedTouches[0] || e.touches[0]).clientY;
+      touchY = null;
+      if (dy > 80) move(1);
+      else if (dy < -80) move(-1);
+      else if (video.paused) {
+        var p = video.play();
+        if (p && p['catch']) p['catch'](function () {});
+      } else video.pause();
+    });
+
+    Lampa.Controller.add('dorama_shorts', {
+      toggle: function () { wake(); },
+      up: function () { move(-1); },
+      down: function () { move(1); },
+      left: function () { wake(); },
+      right: function () { wake(); },
+      enter: openCard,
+      back: destroy
+    });
+    document.body.appendChild(root);
+    show(current());
+    Lampa.Controller.toggle('dorama_shorts');
+  }
+
+  var SHORTS_ICON =
+    '<svg width="24" height="24" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+    '<path d="M253.266 512a19.166 19.166 0 0 1-19.168-19.168V330.607l-135.071-.049a19.164 19.164 0 0 1-16.832-28.32L241.06 10.013a19.167 19.167 0 0 1 36.005 9.154v162.534h135.902a19.167 19.167 0 0 1 16.815 28.363L270.078 502.03a19.173 19.173 0 0 1-16.812 9.97z" fill="currentColor"/></svg>';
+
+  function addShortsMenuItem() {
+    var item = $(
+      '<li class="menu__item selector" data-action="dorama_shorts">' +
+      '<div class="menu__ico">' + SHORTS_ICON + '</div>' +
+      '<div class="menu__text">Shorts</div>' +
+      '</li>'
+    );
+    item.on('hover:enter', function () { openShorts(); });
+    $('.menu .menu__list').eq(0).append(item);
+  }
+  // ===================== end Shorts (CUB clip feed) =====================
+
   function start() {
     if (window.dorama_plugin_ready) return; // guard against double init
     window.dorama_plugin_ready = true;
     Lampa.Component.add('dorama', componentDorama);
     addMenuItem();
+    addShortsMenuItem();
     registerMatchBadge();
     if (Lampa.Listener && Lampa.Listener.follow) {
       Lampa.Listener.follow('state:changed', function (e) { if (e && e.target === 'favorite') setRecsDirty(); });
@@ -923,7 +1208,13 @@
       _dedupeById: dedupeById,
       _minShortId: minShortId,
       _shortsCardKey: shortsCardKey,
-      _resolveShortsLanguages: resolveShortsLanguages
+      _resolveShortsLanguages: resolveShortsLanguages,
+      _orderShorts: orderShorts,
+      _markShortViewed: markShortViewed,
+      _buildShortsFeedData: buildShortsFeedData,
+      _shortsLoadMore: shortsLoadMore,
+      _openShorts: openShorts,
+      _addShortsMenuItem: addShortsMenuItem
     };
   }
 })();

@@ -143,3 +143,176 @@ test('resolveShortsLanguages resets an oversized cache', () => {
   api._resolveShortsLanguages(new mock.Lampa.Reguest(), [shot(1, 100, 'tv')], () => {});
   assert.deepStrictEqual(mock.Lampa.Storage.get('dorama_shorts_lang', {}), { tv_100: 'ko' });
 });
+
+test('orderShorts: ko first, then other Asian, others dropped', () => {
+  const api = loadPlugin(shortsMock());
+  const shots = [shot(5, 1, 'tv'), shot(4, 2, 'movie'), shot(3, 3, 'tv'), shot(2, 4, 'movie')];
+  const langMap = { tv_1: 'ja', movie_2: 'ko', tv_3: 'en', movie_4: 'ko' };
+  assert.deepStrictEqual(api._orderShorts(shots, langMap, []).map(s => s.id), [4, 2, 5]);
+});
+
+test('orderShorts sinks viewed clips to the end of their group', () => {
+  const api = loadPlugin(shortsMock());
+  const shots = [shot(9, 1, 'tv'), shot(8, 2, 'tv'), shot(7, 3, 'tv'), shot(6, 4, 'tv')];
+  const langMap = { tv_1: 'ko', tv_2: 'ko', tv_3: 'ja', tv_4: 'ja' };
+  // 9 and 7 are viewed -> each sinks within its own language group
+  assert.deepStrictEqual(api._orderShorts(shots, langMap, [9, 7]).map(s => s.id), [8, 9, 6, 7]);
+});
+
+test('markShortViewed stores unique ids and caps at 500', () => {
+  const mock = shortsMock();
+  const api = loadPlugin(mock);
+  api._markShortViewed(1);
+  api._markShortViewed(1);
+  api._markShortViewed(2);
+  assert.deepStrictEqual(mock.Lampa.Storage.get('dorama_shorts_viewed', []), [1, 2]);
+  for (let i = 10; i < 510; i++) api._markShortViewed(i);
+  const arr = mock.Lampa.Storage.get('dorama_shorts_viewed', []);
+  assert.strictEqual(arr.length, 500);
+  assert.strictEqual(arr.indexOf(1), -1, 'oldest id evicted');
+  assert.ok(arr.indexOf(509) >= 0, 'newest id kept');
+});
+
+test('buildShortsFeedData: fetches 3 pages, filters, resolves and orders', () => {
+  const page1 = [shot(300, 1, 'tv'), shot(299, 2, 'movie', { status: 'processing' })];
+  const page2 = [shot(250, 3, 'movie'), shot(300, 1, 'tv')]; // 300 is a dupe
+  const page3 = [shot(200, 4, 'tv')];
+  const mock = shortsMock({
+    shotsByCall: [page1, page2, page3],
+    langs: { 'tv/1': 'ja', 'movie/3': 'ko', 'tv/4': 'en' }
+  });
+  const api = loadPlugin(mock);
+  let items;
+  api._buildShortsFeedData(new mock.Lampa.Reguest(), r => { items = r; });
+  // ko (250) first, ja (300) second, en (200) dropped, dupe collapsed
+  assert.deepStrictEqual(items.map(s => s.id), [250, 300]);
+  const lentaUrls = mock.calls.requests.filter(u => u.indexOf('/api/shots/lenta') >= 0);
+  assert.strictEqual(lentaUrls.length, 3);
+  assert.ok(lentaUrls[1].indexOf('sort=from_id') >= 0);
+  // 299 (the filtered-out "processing" clip) is the smallest RAW id on page 1 -
+  // the cursor must walk from there, not from 300 (the smallest READY id), or
+  // the non-ready low id would be re-requested forever.
+  assert.ok(lentaUrls[1].indexOf('id=299') >= 0, 'walks down from the smallest raw seen id');
+});
+
+test('buildShortsFeedData reports null on total network failure', () => {
+  const mock = shortsMock({ failAllShots: true });
+  const api = loadPlugin(mock);
+  let items = 'unset';
+  api._buildShortsFeedData(new mock.Lampa.Reguest(), r => { items = r; });
+  assert.strictEqual(items, null);
+});
+
+test('openShorts: feed factory gets the ordered items and a loadMore fn', () => {
+  const mock = shortsMock({
+    shotsByCall: [[shot(300, 1, 'tv')], [], []],
+    langs: { 'tv/1': 'ko' }
+  });
+  const api = loadPlugin(mock);
+  let seen;
+  api._openShorts((items, loadMore) => { seen = { items, loadMore }; });
+  assert.deepStrictEqual(seen.items.map(s => s.id), [300]);
+  assert.strictEqual(typeof seen.loadMore, 'function');
+  assert.strictEqual(mock.calls.noty.length, 0);
+});
+
+test('openShorts: empty Asian pool -> Noty, factory not called', () => {
+  const mock = shortsMock({
+    shotsByCall: [[shot(300, 1, 'tv')], [], []],
+    langs: { 'tv/1': 'en' } // nothing Asian
+  });
+  const api = loadPlugin(mock);
+  let called = false;
+  api._openShorts(() => { called = true; });
+  assert.strictEqual(called, false);
+  assert.strictEqual(mock.calls.noty.length, 1);
+  assert.ok(/Пока нет/.test(mock.calls.noty[0]));
+});
+
+test('openShorts: network dead -> error Noty, factory not called', () => {
+  const mock = shortsMock({ failAllShots: true });
+  const api = loadPlugin(mock);
+  let called = false;
+  api._openShorts(() => { called = true; });
+  assert.strictEqual(called, false);
+  assert.strictEqual(mock.calls.noty.length, 1);
+  assert.ok(/недоступен/.test(mock.calls.noty[0]));
+});
+
+test('shortsLoadMore: returns ordered items and raw cursor', () => {
+  const mock = shortsMock({
+    shotsByCall: [[shot(240, 7, 'tv')]],
+    langs: { 'tv/7': 'ko' }
+  });
+  const api = loadPlugin(mock);
+  let result;
+  api._shortsLoadMore(new mock.Lampa.Reguest(), 300, r => { result = r; });
+  assert.deepStrictEqual(result.items.map(s => s.id), [240]);
+  assert.strictEqual(result.next, 240);
+});
+
+test('shortsLoadMore: non-Asian page still advances the cursor', () => {
+  const mock = shortsMock({
+    shotsByCall: [[shot(220, 8, 'tv'), shot(210, 9, 'movie')]],
+    langs: { 'tv/8': 'en', 'movie/9': 'en' }
+  });
+  const api = loadPlugin(mock);
+  let result;
+  api._shortsLoadMore(new mock.Lampa.Reguest(), 300, r => { result = r; });
+  assert.deepStrictEqual(result.items, []);
+  assert.strictEqual(result.next, 210);
+});
+
+test('shortsLoadMore: empty page signals exhausted', () => {
+  const mock = shortsMock({ shotsByCall: [[]] });
+  const api = loadPlugin(mock);
+  let result;
+  api._shortsLoadMore(new mock.Lampa.Reguest(), 300, r => { result = r; });
+  assert.deepStrictEqual(result.items, []);
+  assert.strictEqual(result.next, null);
+});
+
+test('openShorts loadMore walks past non-Asian pages and stops when exhausted', () => {
+  const koPage = [shot(300, 1, 'tv')];
+  const nonAsianPage = [shot(280, 2, 'tv'), shot(270, 3, 'movie')];
+  const mock = shortsMock({
+    // idx0: initial page1 (koPage); idx1: buildShortsFeedData's walk attempt (empty ->
+    // stops the initial walk); idx2/idx3: the two loadMore pages under test.
+    shotsByCall: [koPage, [], nonAsianPage, []],
+    langs: { 'tv/1': 'ko', 'tv/2': 'en', 'movie/3': 'en' }
+  });
+  const api = loadPlugin(mock);
+  let loadMoreFn;
+  api._openShorts((items, loadMore) => { loadMoreFn = loadMore; });
+  assert.strictEqual(typeof loadMoreFn, 'function');
+
+  function lentaRequests() { return mock.calls.requests.filter(u => u.indexOf('/api/shots/lenta') >= 0); }
+  const countAfterOpen = lentaRequests().length;
+
+  let result1;
+  loadMoreFn(r => { result1 = r; });
+  assert.deepStrictEqual(result1, []);
+  const lentaAfterFirst = lentaRequests();
+  assert.strictEqual(lentaAfterFirst.length, countAfterOpen + 1, 'one new lenta request using the previous cursor');
+  assert.ok(lentaAfterFirst[lentaAfterFirst.length - 1].indexOf('id=300') >= 0, 'used previous cursor id');
+
+  let result2;
+  loadMoreFn(r => { result2 = r; });
+  assert.deepStrictEqual(result2, []);
+  const countAfterSecond = lentaRequests().length;
+  assert.strictEqual(countAfterSecond, countAfterOpen + 2, 'second call fetches the empty page and becomes exhausted');
+
+  let result3;
+  loadMoreFn(r => { result3 = r; });
+  assert.deepStrictEqual(result3, []);
+  assert.strictEqual(lentaRequests().length, countAfterSecond, 'exhausted feed does not issue a third lenta request');
+});
+
+test('menu: Shorts item lands right after Дорама', () => {
+  const mock = shortsMock();
+  const api = loadPlugin(mock);
+  api._addMenuItem();
+  api._addShortsMenuItem();
+  const texts = mock.menuList._children.map(c => c.text());
+  assert.deepStrictEqual(texts, ['Дорама', 'Shorts']);
+});
