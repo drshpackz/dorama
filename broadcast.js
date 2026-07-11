@@ -19,7 +19,7 @@
 (function () {
   'use strict';
 
-  var manifest = { name: 'Broadcast', version: '2.1.0' };
+  var manifest = { name: 'Broadcast', version: '2.1.1' };
 
   function addLang() {
     if (!Lampa.Lang || !Lampa.Lang.add) return;
@@ -274,9 +274,16 @@
     var lastDevices = [];
     var lastKey = '';
     var poll = null;
+    // While an inline rename is open, device updates must NOT re-render the
+    // list — a rebuild destroys the input mid-edit. Data is buffered in
+    // lastDevices and applied when the edit finishes.
+    var editActive = false;
 
     function onMessage(e) {
-      if (e && e.method === 'devices') renderDevices(e.data);
+      if (e && e.method === 'devices') {
+        if (editActive) lastDevices = e.data || [];
+        else renderDevices(e.data);
+      }
     }
 
     function close() {
@@ -310,9 +317,11 @@
           pen.on('hover:enter', function () {
             if (editing) return;
             editing = true;
+            editActive = true;
             // The name cell becomes the input, right where it was clicked.
             startInlineEdit(name, displayName(device), function (value) {
               editing = false;
+              editActive = false;
               commitDeviceRename(device, value);
               renderDevices(lastDevices);
             });
@@ -332,8 +341,10 @@
       self_row.on('hover:enter', function () {
         if (selfEditing) return;
         selfEditing = true;
+        editActive = true;
         startInlineEdit(self_row, deviceName(), function (value) {
           selfEditing = false;
+          editActive = false;
           commitSelfRename(value);
           renderDevices(lastDevices);
         });
