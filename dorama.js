@@ -906,37 +906,52 @@
   var SHORTS_PAGE_LIMIT = 50;
   var SHORTS_EXTRA_PAGES = 2;
 
-  // done(items): the final ordered feed. done(null) only when the very first
-  // request can't reach any mirror; a failed DEEPER page just stops the walk.
+  // done(items, cursor): the final ordered feed and the smallest RAW id seen
+  // across all fetched pages (or null if page 1 was empty). done(null) only
+  // when the very first request can't reach any mirror; a failed DEEPER page
+  // just stops the walk. The cursor is tracked over RAW pages (before
+  // readiness/language filtering) so a page whose items all get filtered out
+  // still advances the pager instead of getting the walk stuck re-fetching it.
   function buildShortsFeedData(network, done) {
+    var cursor = null;
+    function track(page) {
+      if (!page || !page.length) return;
+      var m = minShortId(page);
+      if (cursor === null || m < cursor) cursor = m;
+    }
     fetchLenta(network, { sort: 'new', page: 1, limit: SHORTS_PAGE_LIMIT }, function (first) {
       if (first === null) { done(null); return; }
+      track(first);
       walk(SHORTS_EXTRA_PAGES, dedupeById(filterReadyShots(first)));
     });
     function walk(left, acc) {
       if (left <= 0 || !acc.length) { finish(acc); return; }
-      fetchLenta(network, { sort: 'from_id', id: minShortId(acc), limit: SHORTS_PAGE_LIMIT }, function (more) {
+      fetchLenta(network, { sort: 'from_id', id: cursor, limit: SHORTS_PAGE_LIMIT }, function (more) {
         if (!more || !more.length) { finish(acc); return; }
+        track(more);
         walk(left - 1, dedupeById(acc.concat(filterReadyShots(more))));
       });
     }
     function finish(acc) {
-      if (!acc.length) { done([]); return; }
+      if (!acc.length) { done([], cursor); return; }
       resolveShortsLanguages(network, acc, function (langMap) {
-        done(orderShorts(acc, langMap, Lampa.Storage.get('dorama_shorts_viewed', []) || []));
+        done(orderShorts(acc, langMap, Lampa.Storage.get('dorama_shorts_viewed', []) || []), cursor);
       });
     }
   }
 
-  // One deeper history page for feed paging. done([]) on any failure so the
-  // feed simply stops growing instead of erroring mid-watch.
+  // One deeper history page for feed paging. done({ items: [], next: null })
+  // on an exhausted/failed page. next is always the RAW page's smallest id
+  // (even when items filters down to []) so the cursor keeps advancing instead
+  // of dead-ending on a page with no Asian clips.
   function shortsLoadMore(network, lastId, done) {
     fetchLenta(network, { sort: 'from_id', id: lastId, limit: SHORTS_PAGE_LIMIT }, function (more) {
-      if (!more || !more.length) { done([]); return; }
+      if (!more || !more.length) { done({ items: [], next: null }); return; }
+      var rawNext = minShortId(more);
       var ready = dedupeById(filterReadyShots(more));
-      if (!ready.length) { done([]); return; }
+      if (!ready.length) { done({ items: [], next: rawNext }); return; }
       resolveShortsLanguages(network, ready, function (langMap) {
-        done(orderShorts(ready, langMap, Lampa.Storage.get('dorama_shorts_viewed', []) || []));
+        done({ items: orderShorts(ready, langMap, Lampa.Storage.get('dorama_shorts_viewed', []) || []), next: rawNext });
       });
     });
   }
@@ -945,17 +960,25 @@
     var factory = feedFactory || createShortsFeed;
     var network = new Lampa.Reguest();
     if (Lampa.Loading && Lampa.Loading.start) Lampa.Loading.start(function () { network.clear(); });
-    buildShortsFeedData(network, function (items) {
+    buildShortsFeedData(network, function (items, cursor) {
       if (Lampa.Loading && Lampa.Loading.stop) Lampa.Loading.stop();
       if (items === null) {
-        Lampa.Noty.show('Shorts: сервер недоступен, попробуйте позже');
+        if (Lampa.Noty && Lampa.Noty.show) Lampa.Noty.show('Shorts: сервер недоступен, попробуйте позже');
         return;
       }
       if (!items.length) {
-        Lampa.Noty.show('Пока нет коротких роликов по дорамам');
+        if (Lampa.Noty && Lampa.Noty.show) Lampa.Noty.show('Пока нет коротких роликов по дорамам');
         return;
       }
-      factory(items, function (lastId, cb) { shortsLoadMore(network, lastId, cb); });
+      var exhausted = !cursor;
+      factory(items, function (cb) {
+        if (exhausted) { cb([]); return; }
+        shortsLoadMore(network, cursor, function (result) {
+          if (result.next && result.next < cursor) cursor = result.next;
+          else exhausted = true;
+          cb(result.items);
+        });
+      });
     });
   }
 
@@ -1038,7 +1061,7 @@
       show(current());
       if (position >= items.length - 3 && !loadingMore) {
         loadingMore = true;
-        loadMore(minShortId(items), function (more) {
+        loadMore(function (more) {
           loadingMore = false;
           for (var i = 0; i < more.length; i++) {
             var dupe = false;
@@ -1099,7 +1122,10 @@
       touchY = null;
       if (dy > 80) move(1);
       else if (dy < -80) move(-1);
-      else video.paused ? video.play() : video.pause();
+      else if (video.paused) {
+        var p = video.play();
+        if (p && p['catch']) p['catch'](function () {});
+      } else video.pause();
     });
 
     Lampa.Controller.add('dorama_shorts', {
