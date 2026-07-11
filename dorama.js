@@ -1172,7 +1172,13 @@
     var focusIndex = 0;
 
     elPosterImg.onload = function () { elPoster.classList.add('dorama-shorts__poster--loaded'); };
-    elPosterImg.onerror = function () { elPoster.classList.add('dorama-shorts__poster--hidden'); };
+    elPosterImg.onerror = function () {
+      elPoster.classList.add('dorama-shorts__poster--hidden');
+      // The focusables list just shrank — snap focus to the first control so
+      // the ring stays visible and the index can't skip a button.
+      focusIndex = 0;
+      applyFocus();
+    };
 
     function focusables() {
       var list = [];
@@ -1323,7 +1329,17 @@
       wheelTime = Date.now();
       move(e.deltaY > 0 ? 1 : -1);
     });
+    // Taps on the panel belong to its buttons — an ES5-safe closest() walk
+    // (Element.closest is missing on old TV engines).
+    function inPanel(node) {
+      while (node && node !== root) {
+        if (node.className && String(node.className).indexOf('dorama-shorts__panel') >= 0) return true;
+        node = node.parentNode;
+      }
+      return false;
+    }
     root.addEventListener('touchstart', function (e) {
+      if (inPanel(e.target)) { touchY = null; return; }
       touchY = (e.touches[0] || e.changedTouches[0]).clientY;
     });
     root.addEventListener('touchend', function (e) {
