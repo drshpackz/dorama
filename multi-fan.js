@@ -4,43 +4,77 @@
   // ===================== Model: Multi-Fan → networks → series =====================
   // A network is a way to filter the catalog, not a UI button. `tmdb` is the set
   // of TMDB network ids whose animated series belong to it; `series` is the
-  // curated list (TMDB tv ids) shown first on its page. Curated membership wins
-  // over TMDB's, so a series sits where fans look for it: TMDB files «Фионна и
-  // Кейк» under Max and «Побочные квесты» under Hulu, here they are Adult Swim
-  // and Cartoon Network. A series may belong to several networks (Футурама:
-  // FOX, Comedy Central, Hulu). The tiles, the rows and the continue-watching
-  // filter all read this model through networksOf(); none of them owns it.
-  // Ids, logos and memberships verified against TMDB on 2026-09-11.
+  // curated list (TMDB tv ids) shown first on its page; `ages` the age levels
+  // (see AGES) at which it has enough to show — three titles or more, measured
+  // 2026-09-11. Curated membership wins over TMDB's, so a series sits where
+  // fans look for it: TMDB files «Фионна и Кейк» under Max and «Побочные
+  // квесты» under Hulu, here they are Adult Swim and Cartoon Network. A series
+  // may belong to several networks (Футурама: FOX, Comedy Central, Hulu).
+  // Tiles, rows and the continue-watching filter all read this model through
+  // networksOf() / networksFor(); none of them owns it.
+  //
+  // No kids' titles: every curated series is rated 12+ by the rule in AGES
+  // (checked against TMDB ratings 2026-09-11). Disney Channel is not here —
+  // with kids' shows removed it has two animated series left.
   var NETWORKS = [
-    { key: 'adult-swim', title: 'Adult Swim', tmdb: [80], logo: '/tHZPHOLc6iF27G34cAZGPsMtMSy.png',
+    { key: 'adult-swim', title: 'Adult Swim', tmdb: [80], logo: '/tHZPHOLc6iF27G34cAZGPsMtMSy.png', ages: ['12', '18'],
       series: [60625, 131378, 709, 61593, 96372, 202282, 74387, // Рик и Морти, Фионна и Кейк, Робоцып, Мистер Пиклз, Мама назвала меня Шерифом, Рик и Морти: Аниме, Крайний космос
         89456, 126506, 228878, 2604, 2723, 251, 2418, 653, 79356, // Первобытный, Задорные друзья, Частые побочные явления, Гетто, Самурай Джек, Команда Фастфуд, Братья Вентура, Металлопокалипсис, Тука и Берти
         416, 2798, 292, 3108, 334, 125928, 40064, 2073, 1542] }, // Харви Бердмэн, Космический Призрак, Моральный Орел, Тюряга, МорЛаб 2021, Мои приключения с Суперменом, Черный динамит, Мишн Хилл, Фриски Динго
-    { key: 'cartoon-network', title: 'Cartoon Network', tmdb: [56], logo: '/c5OC6oVCg6QP4eqzW6XIq17CQjI.png',
-      series: [15260, 256694, 63401, 117030, // Время приключений, Побочные квесты, Мы обычные медведи, Мы медвежата
-        31132, 61617, 37606, 2085, 61175, 94280, 604, 45140, 4686, // Обычный мультик, По ту сторону изгороди, Гамбол, Кураж, Вселенная Стивена (+ Будущее), Юные Титаны, Юные Титаны вперёд!, Бен 10
-        897, 607, 4229, 606, 2660, 2405, 1720, 3611, 18123, 33217] }, // Билли и Мэнди, Суперкрошки, Лаборатория Декстера, Эд Эдд и Эдди, Команда нашего двора, Джонни Браво, Дом Фостер, Коровка и Петушок, Скуби-Ду! Мистическая корпорация, Юная Лига Справедливости
-    { key: 'fox', title: 'FOX', tmdb: [19], logo: '/1DSpHrWyOORkL9N2QHX7Adt31mQ.png',
+    { key: 'cartoon-network', title: 'Cartoon Network', tmdb: [56], logo: '/c5OC6oVCg6QP4eqzW6XIq17CQjI.png', ages: ['12'],
+      series: [15260, 256694, // Время приключений, Побочные квесты
+        31132, 61617, 61175, 94280, 45140, 33217, 2723, 4194] }, // Обычный мультик, По ту сторону изгороди, Вселенная Стивена (+ Будущее), Юные Титаны вперёд!, Юная Лига Справедливости, Самурай Джек, Звёздные войны: Войны клонов
+    { key: 'fox', title: 'FOX', tmdb: [19], logo: '/1DSpHrWyOORkL9N2QHX7Adt31mQ.png', ages: ['12', '18'],
       series: [456, 1434, 32726, 2122, 1433, 131033, 93292, 202224, 82653, 15632, 63039, // Симпсоны, Гриффины, Бургеры Боба, Царь горы, Американский папаша, Крапополис, Дунканвилль, Гримсбург, Благословите Хартов, Шоу Кливленда, Приграничный город
-        615, 93221, 66844, 1839, 4574, 888, 49008] }, // Футурама, Великий север, Сын Зорна, Кинокритик, Люди Икс, Человек-паук (1994), Коп с топором
-    { key: 'comedy-central', title: 'Comedy Central', tmdb: [47], logo: '/6ooPjtXufjsoskdJqj6pxuvHEno.png',
+        615, 93221, 66844, 1839, 49008] }, // Футурама, Великий север, Сын Зорна, Кинокритик, Коп с топором
+    { key: 'comedy-central', title: 'Comedy Central', tmdb: [47], logo: '/6ooPjtXufjsoskdJqj6pxuvHEno.png', ages: ['12', '18'],
       series: [2190, 615, 4336, 32351, 44169, 203489, 2, 2513, 210249, 67761, 60904] }, // Южный Парк, Футурама, Мультреалити, Гадкие американцы, Бриклберри, Бивис и Баттхед Майка Джаджа, Клерки, Доктор Катц, Дигман!, Legends of Chamberlain Heights, ТрипТанк
-    { key: 'disney', title: 'Disney Channel', tmdb: [54, 44], logo: '/9AxUB1RdRnm0r5ki8Thb69Jo9Ma.png',
-      series: [40075, 1877, 92685, 85349, 61923, 2345, 72350, 2355, 346, 17572, 4623, 1615, 3319, 2720, 90461] }, // Гравити Фолз, Финес и Ферб, Дом Совы, Амфибия, Звёздная принцесса, Ким Пять-с-плюсом, Утиные истории (2017), Лило и Стич, Американский дракон, Кик Бутовски, Новая школа Императора, Чип и Дейл, Чёрный Плащ, Чудеса на виражах, Монстры за работой
-    { key: 'mtv', title: 'MTV', tmdb: [33], logo: '/w4qtv7xBkSVsbOQdSzjUjlyOuSr.png',
-      series: [13943, 2131, 2423, 406, 1664, 56021, 3547, 2403, 2280] }, // Бивис и Батт-Хед, Дарья, Celebrity Deathmatch, Эон Флакс, Человек-паук (2003), The Maxx, Студенты, Центральный округ, Голова
-    { key: 'tbs', title: 'TBS', tmdb: [68], logo: '/65r0kR6MfOBYF0gEQsJGM6v5fEG.png',
-      series: [1433, 74387, 478, 590, 1916, 1168, 32858] }, // Американский папаша, Крайний космос, Капитан Планета, Коты быстрого реагирования, 2 Stupid Dogs, Джонни Квест, Адские соседи
-    { key: 'netflix', title: 'Netflix', tmdb: [213], logo: '/wwemzKWzjKYJFfCeiB57q3r4Bcm.png',
-      series: [61222, 86831, 94605, 71024, 73021, 74204, 97727, 96713, 225180, 81046, 79732, // Конь БоДжек, Любовь смерть и роботы, Аркейн, Кастлвания, Разочарование, Большой рот, Корпорация Заговор, Полночные откровения, Голубоглазый самурай, Принц драконов, Ши-Ра
-        63522, 68267, 132141, 123548, 135918, 214603, 195339, 81983] }, // С значит Семья, Охотники на троллей, Майя и три воина, Кастлвания: Ноктюрн, Линия отрыва, Этому миру меня не сломить, Пантеон, Полиция Парадайз
-    { key: 'hulu', title: 'Hulu', tmdb: [453], logo: '/pqUTCleNUiTLAVlelGxUgWn1ELh.png',
-      series: [97645, 615, 2122, 256694, 133903, 111312, 121567, 104127, 107124, 132559] } // Обратная сторона Земли, Футурама, Царь горы, Побочные квесты, Хит-Манки, МОДОК, Koala Man, Скрестив мечи, Озорные анимашки, Семейка Крудс
+    { key: 'mtv', title: 'MTV', tmdb: [33], logo: '/w4qtv7xBkSVsbOQdSzjUjlyOuSr.png', ages: ['12'],
+      series: [13943, 2131, 2423, 406, 1664, 56021, 3547] }, // Бивис и Батт-Хед, Дарья, Celebrity Deathmatch, Эон Флакс, Человек-паук (2003), The Maxx, Студенты
+    { key: 'tbs', title: 'TBS', tmdb: [68], logo: '/65r0kR6MfOBYF0gEQsJGM6v5fEG.png', ages: ['12'],
+      series: [1433, 74387, 32858] }, // Американский папаша, Крайний космос, Адские соседи
+    { key: 'netflix', title: 'Netflix', tmdb: [213], logo: '/wwemzKWzjKYJFfCeiB57q3r4Bcm.png', ages: ['12', '18'],
+      series: [61222, 86831, 94605, 71024, 73021, 74204, 97727, 96713, 225180, 81046, // Конь БоДжек, Любовь смерть и роботы, Аркейн, Кастлвания, Разочарование, Большой рот, Корпорация Заговор, Полночные откровения, Голубоглазый самурай, Принц драконов
+        63522, 123548, 135918, 214603, 195339, 81983] }, // С значит Семья, Кастлвания: Ноктюрн, Линия отрыва, Этому миру меня не сломить, Пантеон, Полиция Парадайз
+    { key: 'hulu', title: 'Hulu', tmdb: [453], logo: '/pqUTCleNUiTLAVlelGxUgWn1ELh.png', ages: ['12', '18'],
+      series: [97645, 615, 2122, 256694, 133903, 111312, 121567, 104127, 107124] } // Обратная сторона Земли, Футурама, Царь горы, Побочные квесты, Хит-Манки, МОДОК, Koala Man, Скрестив мечи, Озорные анимашки
   ];
+
+  // ===================== Age: the second filter axis =====================
+  // Multi-Fan shows no kids' titles. '12' (the default) = 12 and older, '18' =
+  // adults only. TMDB discover filters by one country's scale, and US ratings
+  // are filled in far more often than Russian ones (325 vs 92 animated series
+  // at the 12+ line), so rows filter by the US scale. The line was set against
+  // the Russian ratings of the same titles: TV-PG series sit at RU 12+ (Время
+  // приключений, Дарья, Вселенная Стивена), TV-Y7/TV-G at 6+/0+; for films US
+  // PG is where RU 6+ sits (Шрек, Головоломка), so the film line is PG-13.
+  // A title with no US rating falls back to its Russian one; with neither it
+  // is not shown.
+  var AGES = {
+    '12': { key: '12', title: '12+', tv: 'TV-PG', movie: 'PG-13', ru: 12 },
+    '18': { key: '18', title: '18+', tv: 'TV-MA', movie: 'R', ru: 18 }
+  };
+  var US_TV = ['TV-Y', 'TV-Y7', 'TV-G', 'TV-PG', 'TV-14', 'TV-MA'];
+  var US_MOVIE = ['G', 'PG', 'PG-13', 'R', 'NC-17'];
+
+  function ageOf(key) { return AGES[key] || AGES['12']; }
+  function certQuery(method, age) { return '&certification_country=US&certification.gte=' + (method === 'tv' ? age.tv : age.movie); }
+  // rating: { US, RU } as TMDB gives them ('TV-14', 'PG-13', '16+').
+  function passesAge(rating, media, age) {
+    var scale = media === 'tv' ? US_TV : US_MOVIE;
+    var i = rating && rating.US ? scale.indexOf(rating.US) : -1;
+    if (i >= 0) return i >= scale.indexOf(media === 'tv' ? age.tv : age.movie);
+    var ru = rating ? parseInt(rating.RU, 10) : 0;
+    return !!ru && ru >= age.ru;
+  }
 
   function networkByKey(key) {
     var i; for (i = 0; i < NETWORKS.length; i++) if (NETWORKS[i].key === key) return NETWORKS[i];
     return null;
+  }
+  function networksFor(age) {
+    var out = [], i; for (i = 0; i < NETWORKS.length; i++) if (NETWORKS[i].ages.indexOf(age.key) >= 0) out.push(NETWORKS[i]);
+    return out;
   }
 
   // Keys of every network a series belongs to: curated lists first, then any
@@ -70,53 +104,49 @@
     if (extra) for (k in extra) if (extra.hasOwnProperty(k)) r[k] = extra[k];
     return r;
   }
+  function withAge(rows, age) {
+    var i; for (i = 0; i < rows.length; i++) { rows[i].url += certQuery(rows[i].method, age); rows[i].age = age.key; }
+    return rows;
+  }
   function ymd(d) { return d.toISOString().slice(0, 10); }
   function daysBefore(now, days) { return ymd(new Date(now.getTime() - days * 24 * 3600 * 1000)); }
   function networkQuery(n) { return 'with_networks=' + n.tmdb.join('|') + '&' + ANIMATION; }
 
-  // No network selected: the whole catalog, series and films. Each network
-  // also gets a row of its own, whose «Ещё» opens that network's page.
-  function catalogRows(now) {
-    now = now || new Date();
-    var lte = ymd(now), W = ANIMATION + '&with_origin_country=' + WEST, rows, i;
+  // No network selected: the whole catalog at this age, series and films, and
+  // a row per network whose «Ещё» opens that network's page. (Studio and
+  // family rows are gone: at 12+ Pixar, Disney and DreamWorks have no films.)
+  function catalogRows(now, age) {
+    now = now || new Date(); age = age || AGES['12'];
+    var lte = ymd(now), from = daysBefore(now, 730), W = ANIMATION + '&with_origin_country=' + WEST;
+    var nets = networksFor(age), rows, i;
     rows = [
-      row('Популярные мультсериалы', 'tv', W + '&sort_by=popularity.desc&vote_count.gte=50'),
-      row('Популярные мультфильмы', 'movie', W + '&sort_by=popularity.desc&vote_count.gte=100'),
-      row('Новые мультсериалы', 'tv', W + '&first_air_date.lte=' + lte + '&first_air_date.gte=' + daysBefore(now, 540) + '&sort_by=popularity.desc&vote_count.gte=5'),
-      row('Новые мультфильмы', 'movie', W + '&primary_release_date.lte=' + lte + '&primary_release_date.gte=' + daysBefore(now, 365) + '&sort_by=popularity.desc&vote_count.gte=10'),
-      row('Мультсериалы для взрослых', 'tv', 'with_keywords=161919&' + NO_ANIME + '&with_origin_country=' + WEST + '&sort_by=popularity.desc&vote_count.gte=20')
+      row('Популярные мультсериалы', 'tv', W + '&sort_by=popularity.desc&vote_count.gte=20'),
+      row('Популярные мультфильмы', 'movie', W + '&sort_by=popularity.desc&vote_count.gte=20'),
+      row('Новые мультсериалы', 'tv', W + '&first_air_date.lte=' + lte + '&first_air_date.gte=' + from + '&sort_by=popularity.desc&vote_count.gte=3'),
+      row('Новые мультфильмы', 'movie', W + '&primary_release_date.lte=' + lte + '&primary_release_date.gte=' + from + '&sort_by=popularity.desc&vote_count.gte=3')
     ];
-    for (i = 0; i < NETWORKS.length; i++) {
-      rows.push(row(NETWORKS[i].title, 'tv', networkQuery(NETWORKS[i]) + '&sort_by=popularity.desc', { network: NETWORKS[i].key }));
-    }
-    return rows.concat([
-      row('Лучшие мультсериалы', 'tv', W + '&sort_by=vote_average.desc&vote_count.gte=500'),
-      row('Лучшие мультфильмы', 'movie', W + '&sort_by=vote_average.desc&vote_count.gte=2000'),
-      row('Семейные мультфильмы', 'movie', 'with_genres=16,10751&' + NO_ANIME + '&with_origin_country=' + WEST + '&sort_by=popularity.desc&vote_count.gte=200'),
-      row('Pixar', 'movie', 'with_companies=3&sort_by=popularity.desc&vote_count.gte=100'),
-      row('Walt Disney Animation Studios', 'movie', 'with_companies=6125&with_genres=16&sort_by=popularity.desc&vote_count.gte=100'),
-      row('DreamWorks Animation', 'movie', 'with_companies=521&with_genres=16&sort_by=popularity.desc&vote_count.gte=100'),
-      row('Illumination, Sony Animation, Blue Sky', 'movie', 'with_companies=6704|2251|9383&with_genres=16&sort_by=popularity.desc&vote_count.gte=100'),
-      row('Laika, Aardman, Cartoon Saloon', 'movie', 'with_companies=11537|297|23948&with_genres=16&sort_by=popularity.desc&vote_count.gte=50')
-    ]);
+    for (i = 0; i < nets.length; i++) rows.push(row(nets[i].title, 'tv', networkQuery(nets[i]) + '&sort_by=popularity.desc', { network: nets[i].key }));
+    rows.push(row('Лучшие мультсериалы', 'tv', W + '&sort_by=vote_average.desc&vote_count.gte=200'));
+    rows.push(row('Лучшие мультфильмы', 'movie', W + '&sort_by=vote_average.desc&vote_count.gte=200'));
+    return withAge(rows, age);
   }
 
-  // A network selected: only its animated series. The first row is the curated
-  // list (`pins`), topped up from TMDB; the rest are views of the same set.
-  function channelRows(n, now) {
-    now = now || new Date();
+  // A network selected: only its animated series at this age. The first row is
+  // the curated list (`pins`), topped up from TMDB; the rest are views of it.
+  function channelRows(n, now, age) {
+    now = now || new Date(); age = age || AGES['12'];
     var q = networkQuery(n);
-    return [
+    return withAge([
       row('Главное на ' + n.title, 'tv', q + '&sort_by=vote_count.desc', { pins: n.key }),
       row('Популярно сейчас', 'tv', q + '&sort_by=popularity.desc'),
       row('Новые', 'tv', q + '&first_air_date.lte=' + ymd(now) + '&sort_by=first_air_date.desc'),
       row('Лучшие по оценкам', 'tv', q + '&sort_by=vote_average.desc&vote_count.gte=30'),
       row('Классика', 'tv', q + '&first_air_date.lte=2005-12-31&sort_by=vote_count.desc')
-    ];
+    ], age);
   }
 
-  // A small network (TBS has ten animated series) would show the same cards in
-  // every view; a row with nothing an earlier row didn't already show is dropped.
+  // A small network (TBS has three 12+ animated series) would show the same
+  // cards in every view; a row with nothing new is dropped.
   function dropRedundant(rows) {
     var seen = {}, out = [], i, j, res, fresh;
     for (i = 0; i < rows.length; i++) {
@@ -161,11 +191,12 @@
     });
   }
 
-  // Title details, distilled to what the plugin reads (seasons for the
-  // continue row, networks for the network filter, a card for a pinned series
-  // TMDB's network list lacks). Kept in one Storage object, written once per
-  // screen, not once per title — TVs serialise Storage synchronously.
-  var DETAIL_KEY = 'multifan_details', DETAIL_TTL = 3 * 24 * 3600 * 1000, DETAIL_MAX = 300;
+  // Title details, distilled to what the plugin reads: seasons (continue
+  // row), networks (network filter), age rating (age filter), and a card for a
+  // pinned series TMDB's network list lacks. One Storage object, written once
+  // per screen, not once per title — TVs serialise Storage synchronously.
+  // v2: entries carry the age rating; v1 entries (without it) are not reused.
+  var DETAIL_KEY = 'multifan_details_v2', DETAIL_TTL = 3 * 24 * 3600 * 1000, DETAIL_MAX = 300;
   var detailCache = null, detailDirty = false;
   function cacheLoad() {
     if (!detailCache) detailCache = (Lampa.Storage && Lampa.Storage.get && Lampa.Storage.get(DETAIL_KEY, {})) || {};
@@ -184,18 +215,35 @@
     detailDirty = false;
   }
   function ids(list) { var o = [], i; list = list || []; for (i = 0; i < list.length; i++) if (list[i] && list[i].id != null) o.push(list[i].id); return o; }
+  // US + RU ratings: a series' content_ratings, or a film's release
+  // certifications (the first non-empty one per country).
+  function ratingOf(d, media) {
+    var out = { US: null, RU: null }, list, i, j, r, c;
+    if (media === 'tv') {
+      list = (d.content_ratings && d.content_ratings.results) || [];
+      for (i = 0; i < list.length; i++) { r = list[i]; if (r && (r.iso_3166_1 === 'US' || r.iso_3166_1 === 'RU') && r.rating) out[r.iso_3166_1] = r.rating; }
+    } else {
+      list = (d.release_dates && d.release_dates.results) || [];
+      for (i = 0; i < list.length; i++) {
+        r = list[i];
+        if (!r || (r.iso_3166_1 !== 'US' && r.iso_3166_1 !== 'RU')) continue;
+        for (j = 0; j < (r.release_dates || []).length; j++) { c = r.release_dates[j] && r.release_dates[j].certification; if (c) { out[r.iso_3166_1] = c; break; } }
+      }
+    }
+    return out;
+  }
   function distill(d, media) {
     var seasons = [], s = d.seasons || [], i;
     for (i = 0; i < s.length; i++) if (s[i]) seasons.push([s[i].season_number, s[i].episode_count || 0]);
     return { id: d.id, media: media, name: d.name, original_name: d.original_name, title: d.title, original_title: d.original_title,
       poster_path: d.poster_path, backdrop_path: d.backdrop_path, vote_average: d.vote_average, vote_count: d.vote_count,
       first_air_date: d.first_air_date, release_date: d.release_date, original_language: d.original_language,
-      origin_country: d.origin_country, genre_ids: ids(d.genres), networks: ids(d.networks), seasons: seasons };
+      origin_country: d.origin_country, genre_ids: ids(d.genres), networks: ids(d.networks), seasons: seasons, rating: ratingOf(d, media) };
   }
   function getDetail(network, media, id, done) {
     var cache = cacheLoad(), key = media + '/' + id, hit = cache[key];
     if (hit && Date.now() - hit.t < DETAIL_TTL) { done(hit.v); return; }
-    network.silent(tmdbUrl(key), function (d) {
+    network.silent(tmdbUrl(key + '?append_to_response=' + (media === 'tv' ? 'content_ratings' : 'release_dates')), function (d) {
       if (!d || d.id == null) { done(hit ? hit.v : null); return; }
       var v = distill(d, media);
       cache[key] = { t: Date.now(), v: v }; detailDirty = true;
@@ -210,9 +258,10 @@
 
   // The curated row: the network's `series` in model order, then everything
   // else TMDB lists for it. Two pages cover most of a list; a pinned series
-  // TMDB files elsewhere is fetched by id (and cached).
+  // TMDB files elsewhere is fetched by id, cached, and shown only if its
+  // rating clears the age (the discover pool is already filtered by it).
   function loadPinned(network, r, done) {
-    var n = networkByKey(r.pins);
+    var n = networkByKey(r.pins), age = ageOf(r.age);
     fetchResults(network, r.url, 'tv', function (p1, pages, err) {
       if (pages > 1) fetchResults(network, r.url + '&page=2', 'tv', function (p2) { order(p1.concat(p2), pages, err); });
       else order(p1, pages, err);
@@ -224,7 +273,7 @@
       function step() {
         if (k >= missing.length) { finish(); return; }
         var id = missing[k++];
-        getDetail(network, 'tv', id, function (v) { if (v) byId[id] = cardFromDetail(v); step(); });
+        getDetail(network, 'tv', id, function (v) { if (v && passesAge(v.rating, 'tv', age)) byId[id] = cardFromDetail(v); step(); });
       }
       function finish() {
         var out = [], pinned = {};
@@ -321,9 +370,11 @@
   function hasAnimation(gids) { return (gids || []).indexOf(16) >= 0; }
   function clone(o) { var c = {}, k; for (k in o) if (o.hasOwnProperty(k)) c[k] = o[k]; return c; }
 
-  // done(row|null). `n` limits the row to one network's series (films have no
-  // network, so they only appear with none selected).
-  function loadContinue(network, n, done) {
+  // done(row|null). Only animation that clears the age; `n` limits the row to
+  // one network's series (films have no network, so they only appear with
+  // none selected). A title whose detail can't be fetched is left out — its
+  // rating is unknown.
+  function loadContinue(network, n, age, done) {
     if (!timelineReady()) { done(null); return; }
     var cands = (Lampa.Favorite.continues('tv') || []).slice(0, CW_TV);
     if (!n) cands = cands.concat((Lampa.Favorite.continues('movie') || []).slice(0, CW_MOVIE));
@@ -339,16 +390,15 @@
       if (k >= cands.length) { finish(); return; }
       var c = cands[k++];
       if (!c || c.id == null) { step(); return; }
-      if (!isTv(c)) {
-        if (hasAnimation(c.genre_ids)) { keep(c, movieProgress(c)); step(); return; }
-        // A card stored from its full page has `genres`, which Lampa's
-        // clearCard drops, so genre_ids can be missing: ask TMDB.
-        getDetail(network, 'movie', c.id, function (v) { if (v && hasAnimation(v.genre_ids)) keep(c, movieProgress(c)); step(); });
-        return;
-      }
-      getDetail(network, 'tv', c.id, function (v) {
-        if (v && hasAnimation((c.genre_ids && c.genre_ids.length) ? c.genre_ids : v.genre_ids) &&
-            (!n || networksOf(c.id, v.networks).indexOf(n.key) >= 0)) keep(c, seriesProgress(c, v.seasons));
+      var media = isTv(c) ? 'tv' : 'movie';
+      getDetail(network, media, c.id, function (v) {
+        // A card stored from its full page carries `genres`, which Lampa's
+        // clearCard drops, so the detail's genre_ids back it up.
+        var gids = (c.genre_ids && c.genre_ids.length) ? c.genre_ids : (v ? v.genre_ids : []);
+        if (v && hasAnimation(gids) && passesAge(v.rating, media, age)) {
+          if (media === 'movie') keep(c, movieProgress(c));
+          else if (!n || networksOf(c.id, v.networks).indexOf(n.key) >= 0) keep(c, seriesProgress(c, v.seasons));
+        }
         step();
       });
     }
@@ -383,21 +433,38 @@
     });
   }
 
-  // ===================== Network tiles =====================
+  // ===================== Tiles: «Все мульты» · «18+» · networks =====================
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   function img(path) { return (Lampa.Api && Lampa.Api.img) ? Lampa.Api.img(path, 'w300') : path; }
 
   var ALL_TITLE = 'Все мульты';
 
-  function tilesRow(activeKey) {
-    var items = [{ key: '', title: ALL_TITLE, __active: !activeKey }], i;
-    for (i = 0; i < NETWORKS.length; i++) items.push({ key: NETWORKS[i].key, title: NETWORKS[i].title, logo: NETWORKS[i].logo, __active: NETWORKS[i].key === activeKey });
+  // The row mirrors the two filters: «Все мульты» clears the network, «18+»
+  // toggles the age, a logo picks a network. Networks with too little at the
+  // current age are not offered. Each tile carries the view it was drawn in,
+  // so its enter knows what to keep.
+  function tilesRow(networkKey, ageKey) {
+    var age = ageOf(ageKey), nets = networksFor(age), view = { network: networkKey || '', age: age.key }, i;
+    var items = [
+      { kind: 'all', title: ALL_TITLE, __active: !networkKey, __view: view },
+      { kind: 'age', title: AGES['18'].title, __active: age.key === '18', __view: view }
+    ];
+    for (i = 0; i < nets.length; i++) {
+      items.push({ kind: 'net', key: nets[i].key, title: nets[i].title, logo: nets[i].logo, __active: nets[i].key === networkKey, __view: view });
+    }
     // line_type only names the row's CSS class; the default 'cards' carries
     // `min-height: 24em` for posters, which left a band under the short tiles.
     return { title: 'Каналы', results: items, cardClass: makeTile, nomore: true, noimage: true, line_type: 'multifan-tiles', multifan_tiles: true };
   }
 
-  // A rectangular logo tile. It handles its own enter: the row's default enter
+  function onTileEnter(t) {
+    var v = t.__view || { network: '', age: '12' };
+    if (t.kind === 'all') openView('', v.age);
+    else if (t.kind === 'age') openView(v.network, v.age === '18' ? '12' : '18');
+    else openView(t.key, v.age);
+  }
+
+  // A rectangular tile. It handles its own enter: the row's default enter
   // opens a card's full page, and a tile is a filter, not a title.
   // `layer--visible layer--render` + the 'visible' listener are the native
   // card's contract: a row appends cards lazily, and Lampa dispatches
@@ -411,10 +478,11 @@
     this.create = function () {
       var inner = data.logo
         ? '<img class="multifan-net__logo" src="' + esc(img(data.logo)) + '" alt="' + esc(data.title) + '" />'
-        : '<div class="multifan-net__all">' + esc(data.title) + '</div>';
-      this.el = $('<div class="multifan-net selector layer--visible layer--render' + (data.logo ? '' : ' multifan-net--all') + (data.__active ? ' multifan-net--active' : '') + '">' + inner + '</div>');
+        : '<div class="multifan-net__text">' + esc(data.title) + '</div>';
+      var mod = data.kind === 'all' ? ' multifan-net--all' : data.kind === 'age' ? ' multifan-net--age' : '';
+      this.el = $('<div class="multifan-net selector layer--visible layer--render' + mod + (data.__active ? ' multifan-net--active' : '') + '">' + inner + '</div>');
       this.el.on('hover:focus', function () { if (self.onFocus) self.onFocus(self.render(true), data); });
-      this.el.on('hover:enter', function () { openNetwork(data.key); });
+      this.el.on('hover:enter', function () { onTileEnter(data); });
       this.el.on('visible', function () { self.visible(); });
     };
     this.visible = function () { if (self.onVisible) self.onVisible(); };
@@ -423,16 +491,20 @@
   }
 
   function activeObject() { try { return Lampa.Activity.active(); } catch (e) { return null; } }
+  function viewTitle(n, age) { return MENU_TITLE + (n ? ' · ' + n.title : '') + (age.key === '18' ? ' · ' + age.title : ''); }
 
-  // Choosing a network from the full catalog opens its page (Back returns to
-  // the catalog); switching between networks replaces the page, so Back never
-  // walks through every channel the user flicked past.
-  function openNetwork(key) {
-    var cur = activeObject(), n = key ? networkByKey(key) : null;
-    if (key && !n) return;
-    if (cur && cur.component === 'multifan' && (cur.network || '') === (key || '')) return;
-    var obj = { url: '', title: n ? MENU_TITLE + ' · ' + n.title : MENU_TITLE, component: 'multifan', network: key || '', source: 'tmdb', card_type: true, page: 1 };
-    if (cur && cur.component === 'multifan' && cur.network && Lampa.Activity.replace) Lampa.Activity.replace(obj);
+  // Leaving the start page (all networks, 12+) opens a new page, so Back
+  // returns to it; any other change replaces the page, so Back never walks
+  // through every filter the user flicked past. A network with too little at
+  // the new age falls back to all networks.
+  function openView(key, ageKey) {
+    var age = ageOf(ageKey), n = key ? networkByKey(key) : null;
+    if (n && n.ages.indexOf(age.key) < 0) n = null;
+    var cur = activeObject(), mine = cur && cur.component === 'multifan';
+    if (mine && (cur.network || '') === (n ? n.key : '') && ageOf(cur.age).key === age.key) return;
+    var obj = { url: '', title: viewTitle(n, age), component: 'multifan', network: n ? n.key : '', age: age.key, source: 'tmdb', card_type: true, page: 1 };
+    var atStart = mine && !cur.network && ageOf(cur.age).key === '12';
+    if (mine && !atStart && Lampa.Activity.replace) Lampa.Activity.replace(obj);
     else Lampa.Activity.push(obj);
   }
 
@@ -440,7 +512,9 @@
     '.multifan-net{flex-shrink:0;width:15em;height:7em;margin-right:1em;border-radius:1em;background:#f2f2f2;display:flex;align-items:center;justify-content:center;position:relative;transition:transform .15s}' +
     '.multifan-net__logo{max-width:72%;max-height:58%;object-fit:contain}' +
     '.multifan-net--all{background:linear-gradient(135deg,#6a3df0,#e0457b)}' +
-    '.multifan-net__all{color:#fff;font-weight:700;font-size:1.4em;text-align:center;padding:0 .5em}' +
+    '.multifan-net--age{background:linear-gradient(135deg,#8e0e28,#ff4b2b)}' +
+    '.multifan-net__text{color:#fff;font-weight:700;font-size:1.4em;text-align:center;padding:0 .5em}' +
+    '.multifan-net--age .multifan-net__text{font-size:2.2em;letter-spacing:.02em}' +
     '.multifan-net.focus{transform:scale(1.06);box-shadow:0 0 0 .3em #fff}' +
     '.multifan-net--active::after{content:"";position:absolute;left:20%;right:20%;bottom:-.7em;height:.3em;border-radius:.3em;background:#ffd400}' +
     '.multifan-cw{position:absolute;left:0;right:0;bottom:0;z-index:2;padding:2em .6em .55em;background:linear-gradient(rgba(0,0,0,0),rgba(0,0,0,.88));color:#fff;font-size:.9em;font-weight:600;line-height:1.3;border-radius:0 0 1em 1em;pointer-events:none}' +
@@ -454,16 +528,16 @@
   }
 
   // ===================== Screen =====================
-  function loadView(network, n, onDone, onFail) {
-    var rows = n ? channelRows(n) : catalogRows();
+  function loadView(network, n, age, onDone, onFail) {
+    var rows = n ? channelRows(n, null, age) : catalogRows(null, age);
     var errors = 0, lastStatus = 0;
     function note(err) { if (err) { errors++; if (typeof err === 'number' && err > 0) lastStatus = err; } }
     loadRowsConcurrent(network, rows, note, function (loaded) {
       if (n) loaded = dropRedundant(loaded);
-      loadContinue(network, n, function (cw) {
+      loadContinue(network, n, age, function (cw) {
         cacheFlush();
         if (!loaded.length && !cw) { onFail({ errored: errors > 0, status: lastStatus }); return; }
-        onDone([tilesRow(n ? n.key : '')].concat(cw ? [cw] : []).concat(loaded));
+        onDone([tilesRow(n ? n.key : '', age.key)].concat(cw ? [cw] : []).concat(loaded));
       });
     });
   }
@@ -472,19 +546,21 @@
     var comp = new Lampa.InteractionMain(object);
     var network = new Lampa.Reguest();
     if (network.timeout) network.timeout(1000 * 15);
+    var age = ageOf(object && object.age);
     var n = object && object.network ? networkByKey(object.network) : null;
+    if (n && n.ages.indexOf(age.key) < 0) n = null;
 
     comp.create = function () {
       var self = this;
       this.activity.loader(true);
-      loadView(network, n, function (data) {
+      loadView(network, n, age, function (data) {
         self.build(data);
         self.activity.loader(false);
         self.activity.toggle();
         // On a network page the remote starts on its series, one row below the
         // tiles: left on the first tile, one more OK would bounce back to «Все
         // мульты». (Focusing the active tile itself fails on a TV — the row
-        // appends tiles lazily, so the 10th may not exist yet.)
+        // appends tiles lazily, so the last ones may not exist yet.)
         if (n && self.down) self.down();
       }, function (info) { self.showState(info); });
       return this.render();
@@ -503,10 +579,11 @@
       this.activity.toggle();
     };
 
-    // A network row's «Ещё» opens the network's page; any other row its grid.
+    // A network row's «Ещё» opens the network's page at this age; any other
+    // row its grid (the row url carries the age filter).
     comp.onMore = function (r) {
       if (!r) return;
-      if (r.network) { openNetwork(r.network); return; }
+      if (r.network) { openView(r.network, age.key); return; }
       if (!r.url) return;
       Lampa.Activity.push({ url: r.url, title: r.title, component: 'category_full', source: 'tmdb', card_type: true, page: 1 });
     };
@@ -532,7 +609,7 @@
       '</li>'
     );
     item.on('hover:enter', function () {
-      Lampa.Activity.push({ url: '', title: MENU_TITLE, component: 'multifan', network: '', source: 'tmdb', card_type: true, page: 1 });
+      Lampa.Activity.push({ url: '', title: MENU_TITLE, component: 'multifan', network: '', age: '12', source: 'tmdb', card_type: true, page: 1 });
     });
     $('.menu .menu__list').eq(0).append(item);
   }
@@ -553,8 +630,12 @@
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
       NETWORKS: NETWORKS,
+      AGES: AGES,
       networkByKey: networkByKey,
       networksOf: networksOf,
+      networksFor: networksFor,
+      passesAge: passesAge,
+      _certQuery: certQuery,
       _catalogRows: catalogRows,
       _channelRows: channelRows,
       _dropRedundant: dropRedundant,
@@ -564,7 +645,7 @@
       _nextEpisode: nextEpisode,
       _continueLabel: continueLabel,
       _clock: clock,
-      _openNetwork: openNetwork,
+      _openView: openView,
       _registerContinueOverlay: registerContinueOverlay,
       _component: componentMultiFan,
       _start: start
