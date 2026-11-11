@@ -120,6 +120,73 @@
     return rows;
   }
 
+  // --- user-chosen sort (head button → Lampa.Select), stored in 'dorama_sort' ---
+  // Each option maps to TMDB sort_by per media type plus a client-side field, so
+  // merged rows (recommendations, fallbacks) follow the same order. '' keeps the
+  // curated order. Rating sorts raise vote_count.gte to RATED_MIN_VOTES so a 10.0
+  // from three votes can't top a row; date sorts cap the date at today so
+  // announced stubs don't lead "newest first".
+  var SORTS = [
+    { key: '', title: 'Как в подборке' },
+    { key: 'rating_desc', title: 'Рейтинг: по убыванию', field: 'vote_average', dir: -1, movie: 'vote_average.desc', tv: 'vote_average.desc', rated: true },
+    { key: 'rating_asc', title: 'Рейтинг: по возрастанию', field: 'vote_average', dir: 1, movie: 'vote_average.asc', tv: 'vote_average.asc', rated: true },
+    { key: 'popularity_desc', title: 'Популярность: по убыванию', field: 'popularity', dir: -1, movie: 'popularity.desc', tv: 'popularity.desc' },
+    { key: 'votes_desc', title: 'Число оценок: по убыванию', field: 'vote_count', dir: -1, movie: 'vote_count.desc', tv: 'vote_count.desc' },
+    { key: 'date_desc', title: 'Дата выхода: сначала новые', field: 'date', dir: -1, movie: 'primary_release_date.desc', tv: 'first_air_date.desc', dated: true },
+    { key: 'date_asc', title: 'Дата выхода: сначала старые', field: 'date', dir: 1, movie: 'primary_release_date.asc', tv: 'first_air_date.asc', dated: true }
+  ];
+  var RATED_MIN_VOTES = { movie: 50, tv: 30 };
+
+  function findSort(key) {
+    var i; if (!key) return null;
+    for (i = 0; i < SORTS.length; i++) if (SORTS[i].key === key) return SORTS[i];
+    return null;
+  }
+  function currentSort() {
+    return findSort((Lampa.Storage && Lampa.Storage.get) ? Lampa.Storage.get('dorama_sort', '') : '');
+  }
+
+  // Rewrite a discover url to the chosen sort. Non-discover paths and no sort
+  // pass through untouched. `now` is injectable for tests.
+  function applySort(url, method, sort, now) {
+    var by = sort && sort[method], m, floor, lteKey;
+    if (!by || url.indexOf('discover/') !== 0) return url;
+    url = /[?&]sort_by=/.test(url)
+      ? url.replace(/([?&]sort_by=)[^&]*/, '$1' + by)
+      : url + (url.indexOf('?') >= 0 ? '&' : '?') + 'sort_by=' + by;
+    if (sort.rated) {
+      floor = RATED_MIN_VOTES[method] || 0;
+      m = /([?&]vote_count\.gte=)(\d+)/.exec(url);
+      if (!m) url += '&vote_count.gte=' + floor;
+      else if (parseInt(m[2], 10) < floor) url = url.replace(m[0], m[1] + floor);
+    }
+    if (sort.dated) {
+      lteKey = method === 'tv' ? 'first_air_date.lte=' : 'primary_release_date.lte=';
+      if (url.indexOf(lteKey) < 0) url += '&' + lteKey + ymd(now || new Date());
+    }
+    return url;
+  }
+
+  // Client-side order by the sort's field (stable); cards without a value go last.
+  function sortValue(card, field) {
+    var v;
+    if (field === 'date') { v = Date.parse(card.release_date || card.first_air_date || ''); return isNaN(v) ? null : v; }
+    v = card[field];
+    return (v === undefined || v === null || v === '') ? null : +v;
+  }
+  function sortResults(list, sort) {
+    if (!sort || !sort.field || !list) return list;
+    var ranked = [], out = [], i;
+    for (i = 0; i < list.length; i++) ranked.push({ c: list[i], v: list[i] ? sortValue(list[i], sort.field) : null, i: i });
+    ranked.sort(function (a, b) {
+      if (a.v === null || b.v === null) return (a.v === null ? 1 : 0) - (b.v === null ? 1 : 0) || (a.i - b.i);
+      return ((a.v - b.v) * sort.dir) || (a.i - b.i);
+    });
+    for (i = 0; i < ranked.length; i++) out.push(ranked[i].c);
+    return out;
+  }
+  function catalogTitle(sort) { return sort ? 'Дорама · ' + sort.title : 'Дорама'; }
+
   // Per-open page rotation so the feed isn't identical every time. The same row
   // shows a slightly different page each open (seed advances per open), and pages
   // differ per category (hash of the row title). Pure + injectable for tests.
@@ -550,8 +617,43 @@
 
   function openCatalog() {
     Lampa.Activity.push({
-      url: '', title: 'Дорама', component: 'dorama',
+      url: '', title: catalogTitle(currentSort()), component: 'dorama',
       source: 'tmdb', card_type: true, page: 1
+    });
+  }
+
+  var SORT_ICON =
+    '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+    '<path d="M4 6H14M4 12H11M4 18H8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>' +
+    '<path d="M18 5V19M18 19L15 16M18 19L21 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+  // Pick a sort; the open Дорама screen reloads in it (rotation off, strict order).
+  function showSortMenu() {
+    var cur = currentSort(), curKey = cur ? cur.key : '', items = [], i;
+    for (i = 0; i < SORTS.length; i++) items.push({ title: SORTS[i].title, key: SORTS[i].key, selected: SORTS[i].key === curKey });
+    Lampa.Select.show({
+      title: 'Сортировка',
+      items: items,
+      onSelect: function (a) {
+        if (a.key === curKey) { Lampa.Controller.toggle('head'); return; }
+        Lampa.Storage.set('dorama_sort', a.key);
+        Lampa.Activity.replace({ title: catalogTitle(findSort(a.key)) });
+      },
+      onBack: function () { Lampa.Controller.toggle('head'); }
+    });
+  }
+
+  // Sort button in the head (↑ from the rows), shown only on the Дорама screen.
+  function addSortButton() {
+    var actions = $('.head .head__actions').eq(0), btn, active;
+    if (!actions || !actions.prepend) return;
+    btn = $('<div class="head__action selector dorama-sort hide" title="Сортировка">' + SORT_ICON + '</div>');
+    btn.on('hover:enter', showSortMenu);
+    actions.prepend(btn);
+    try { active = Lampa.Activity.active(); } catch (e) { active = null; }
+    btn.toggleClass('hide', !(active && active.component === 'dorama'));
+    Lampa.Listener.follow('activity', function (e) {
+      if (e && e.type === 'start') btn.toggleClass('hide', e.component !== 'dorama');
     });
   }
 
@@ -619,16 +721,20 @@
   // Fetch all rows with bounded concurrency, preserving catalog order (slot per
   // index). Each row fetches its rotated preview page (rotation on unless
   // row.rotate === false); an empty rotated page falls back to page 1 so thin
-  // rows never vanish. posterRequired rows drop poster-less cards. row.url is
-  // left untouched so "more" still opens the full grid from page 1.
-  function loadRowsConcurrent(network, rows, dislikeSet, seed, note, allDone) {
+  // rows never vanish. posterRequired rows drop poster-less cards. The slot keeps
+  // the page-less url so "more" still opens the full grid from page 1.
+  // A chosen `sort` rewrites each url (applySort), turns rotation off and keeps
+  // the strict order (no dislike reorder); a sorted url that comes back empty
+  // (raised vote floor) falls back to the curated url, ordered client-side.
+  function loadRowsConcurrent(network, rows, dislikeSet, seed, note, sort, allDone) {
     var slots = new Array(rows.length);
     var launched = 0, finished = 0, n = rows.length, k;
     if (!n) { allDone([]); return; }
-    function settle(idx, row, results, totalPages) {
+    function settle(idx, row, url, results, totalPages) {
       if (row.posterRequired) results = withPoster(results);
+      results = sort ? sortResults(results, sort) : reorderByDislike(results, dislikeSet);
       slots[idx] = results.length
-        ? { title: row.title, results: reorderByDislike(results, dislikeSet), url: row.url, method: row.method, source: 'tmdb', total_pages: totalPages }
+        ? { title: row.title, results: results, url: url, method: row.method, source: 'tmdb', total_pages: totalPages }
         : null;
       finished++;
       if (finished >= n) { allDone(compactRows(slots)); return; }
@@ -637,13 +743,14 @@
     function launchNext() {
       if (launched >= n) return;
       var idx = launched++, row = rows[idx];
-      var p = (row.rotate === false) ? 1 : rowPage(row.title, seed, row.depth || 3);
-      var url = p > 1 ? row.url + '&page=' + p : row.url;
+      var base = sort ? applySort(row.url, row.method, sort) : row.url;
+      var p = (sort || row.rotate === false) ? 1 : rowPage(row.title, seed, row.depth || 3);
+      var url = p > 1 ? base + '&page=' + p : base;
       fetchResults(network, url, row.method, function (results, totalPages, err) {
         note(err);
-        if (!results.length && p > 1) {
-          fetchResults(network, row.url, row.method, function (r2, tp2, e2) { note(e2); settle(idx, row, r2, tp2); });
-        } else settle(idx, row, results, totalPages);
+        if (!results.length && url !== row.url) {
+          fetchResults(network, row.url, row.method, function (r2, tp2, e2) { note(e2); settle(idx, row, row.url, r2, tp2); });
+        } else settle(idx, row, base, results, totalPages);
       });
     }
     for (k = 0; k < ROW_CONCURRENCY && k < n; k++) launchNext();
@@ -682,6 +789,7 @@
     var errors = 0, lastStatus = 0;
     var signals = collectSignals();
     var seed = rotationSeed();
+    var sort = currentSort();
     var pin = popularRows().length + buildDynamicRows().length; // popular + newest stay on top
     function note(errStatus) { if (errStatus) { errors++; if (typeof errStatus === 'number' && errStatus > 0) lastStatus = errStatus; } }
 
@@ -689,7 +797,7 @@
     enrichSeeds(network, signals.positives, function (enriched) {
       var rows = orderCatalogRows(baseRows, buildTasteProfile(enriched), pin);
       buildDislikeSet(network, signals.negatives, function (dislikeSet) {
-        loadRowsConcurrent(network, rows, dislikeSet, seed, note, function (curated) {
+        loadRowsConcurrent(network, rows, dislikeSet, seed, note, sort, function (curated) {
           // BL block is only needed by the recommendations row, so skip it cold.
           if (signals.positives.length) {
             buildBLBlock(network, function (block) { currentBLBlock = block; loadHead(dislikeSet, curated); });
@@ -704,7 +812,13 @@
           window.dorama_cold_noted = true;
           if (Lampa.Noty && Lampa.Noty.show) Lampa.Noty.show('Лайкните или оцените дорамы, чтобы получить персональные рекомендации');
         }
-        var head = (recRow && recRow.results && recRow.results.length) ? [recRow] : [];
+        var head = (recRow && recRow.results && recRow.results.length) ? [recRow] : [], k, sorted;
+        if (sort && head.length) {
+          // copy: recRow may be the cached row reused by the next unsorted open
+          sorted = {}; for (k in recRow) if (recRow.hasOwnProperty(k)) sorted[k] = recRow[k];
+          sorted.results = sortResults(recRow.results, sort);
+          head = [sorted];
+        }
         var allRows = head.concat(curated);
         if (allRows.length) onDone(allRows);
         else onFail({ errored: errors > 0 || (recRow && recRow.__errored), status: lastStatus });
@@ -755,8 +869,9 @@
       // The recommendation row is a merged feed with no single Discover URL,
       // so it has no "more" grid — skip it instead of pushing url:undefined.
       if (!row || !row.url) return;
+      var sort = currentSort();
       Lampa.Activity.push({
-        url: row.url, title: row.title,
+        url: row.url, title: sort ? row.title + ' · ' + sort.title : row.title,
         component: 'category_full', source: 'tmdb', card_type: true, page: 1
       });
     };
@@ -1441,6 +1556,7 @@
     Lampa.Component.add('dorama', componentDorama);
     addMenuItem();
     addShortsMenuItem();
+    addSortButton();
     registerMatchBadge();
     if (Lampa.Listener && Lampa.Listener.follow) {
       Lampa.Listener.follow('state:changed', function (e) { if (e && e.target === 'favorite') setRecsDirty(); });
@@ -1464,6 +1580,9 @@
       _rowPage: rowPage,
       _rowAffinity: rowAffinity,
       _orderCatalogRows: orderCatalogRows,
+      _applySort: applySort,
+      _sortResults: sortResults,
+      _sorts: SORTS,
       mergeRecommendations: mergeRecommendations,
       _buildTasteProfile: buildTasteProfile,
       _scoreCandidate: scoreCandidate,
