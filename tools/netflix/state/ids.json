@@ -12579,7 +12579,8 @@
 "tv:The Voice of Ukraine":12577,
 "tv:Under Siege":12578,
 "film:The King#1":12579,
-"film:Midnight Sun#1":12580
+"film:Midnight Sun#1":12580,
+"film:Spellbound#1":12581
 },
 "seasons":{
 "tv:The Queen's Gambit\tLimited Series":0,
@@ -26649,7 +26650,8 @@
 "tv:The Voice of Ukraine\tSeason 14":14064,
 "tv:Under Siege\tLimited Series":14065,
 "film:The King#1\t":14066,
-"film:Midnight Sun#1\t":14067
+"film:Midnight Sun#1\t":14067,
+"film:Spellbound#1\t":14068
 },
 "merged":{
 "film:Believer: Extended Cut":"film:Believer",
@@ -26679,5 +26681,5 @@
 "tv:The Accidental Influencer: Love Me if You Dare":"tv:The Accidental Influencer",
 "tv:The Boss Baby: Christmas Bonus":"film:The Boss Baby: Christmas Bonus"
 },
-"next_n":12581,
-"next_sid":14068}
+"next_n":12582,
+"next_sid":14069}
