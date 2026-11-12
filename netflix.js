@@ -2648,6 +2648,9 @@
   function tileInfo(d) {
     var list, T1, T2, o, sum, m, cc = D.man && D.man.cc ? Object.keys(D.man.cc).length : 0;
     if (d.tile === 'chip') {
+      // Каталог не загрузился («!») или ещё грузится («…»): меню не откроется, число не обещаем (§9).
+      if (d.key === 'all' && d.value === '!') return ['Каталог не загрузился' + codeNote(d.code), 'фильтры недоступны, пока каталог не придёт'];
+      if (d.key === 'all' && d.value === '…') return ['Фильтры: ' + (nfSummary(currentNf()) || 'не заданы'), 'каталог загружается… · OK — меню, когда он придёт'];
       if (d.key === 'all') return ['Фильтры: ' + (nfSummary(currentNf()) || 'не заданы'), 'Под подбор подходит: ' + d.value + ' · OK — все фильтры в одном меню'];
       return [String(d.label).split(' · ')[0] + ': ' + (d.full || d.value), (CHIP_HINT[d.key] || 'OK — изменить') + ' · долгое OK — сбросить'];
     }
@@ -3502,21 +3505,28 @@
     function catalogFailed(code) {
       if (dead) return;
       failed = true;
+      if (chips && chips.results[0]) chips.results[0].code = code;
       refreshChips();
       if (failNoted || activeObj() !== object) return;
       failNoted = true;
       noty('Каталог не загрузился' + codeNote(code));
     }
     // Фишка «Фильтры» показывает «…», пока нет индекса, затем число результата; каталог не загрузился — «!».
+    // Фишка в фокусе — и полоса под ней («загружается…» → число или «Каталог не загрузился»).
     function refreshChips() {
       var d = chips && chips.results[0];
       if (!d || dead) return;
       if (!D.index || (o.c && !D.cty[o.c])) {
-        if (failed && d.value !== '!') { d.value = '!'; if (d.__tile) d.__tile.update(); }
+        if (failed && d.value !== '!') { d.value = '!'; chipDrawn(d); }
         return;
       }
       d.value = fmtInt(countNf(o));
-      if (d.__tile) d.__tile.update();
+      chipDrawn(d);
+    }
+    function chipDrawn(d) {
+      if (!d.__tile) return;
+      d.__tile.update();
+      if (d.__tile.el && d.__tile.el.hasClass('focus')) focusLine(d, object);
     }
 
     comp.nfState = function (code, c) { screenEmpty(this, code, c); };
