@@ -5204,10 +5204,16 @@
     Lampa.Listener.follow('activity', function (e) { if (e && e.type === 'start') sync(e.object || { component: e.component }); });
   }
   // Пункт меню всегда открывает «Мир» (§5.1) с последней сортировкой; прошлый подбор ждёт на плитке.
+  // «Мира» на «Мире» не бывает (§6.4.7): на «Мире» пункт его заменяет, как меню Lampa свой же компонент
+  // (menu.js prepared → Activity.replace); на подборе или стране — шаг назад к «Миру» под ним, как сброс
+  // подбора (applyNf). С других экранов — push.
   function openRoot() {
-    var o = emptyNf(), s = String(storageGet('netflix_sort', '') || '');
+    var o = emptyNf(), s = String(storageGet('netflix_sort', '') || ''), cur = activeObj(), obj;
     if (SORT[s]) o.s = s === 'pop' ? '' : s;
-    Lampa.Activity.push({ url: '', title: nfTitle(o), component: 'netflix', source: 'tmdb', page: 1, nf: buildNf(o) });
+    obj = { url: '', title: nfTitle(o), component: 'netflix', source: 'tmdb', page: 1, nf: buildNf(o) };
+    if (!cur || cur.component !== 'netflix') Lampa.Activity.push(obj);
+    else if (nfMode(parseNf(cur.nf)) === 'world') Lampa.Activity.replace(obj);
+    else applyNf(o);
   }
   function addMenuItem() {
     var item = $('<li class="menu__item selector" data-action="netflix"><div class="menu__ico">' + ICON + '</div><div class="menu__text">' + MENU_TITLE + '</div></li>');
