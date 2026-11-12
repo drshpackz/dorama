@@ -412,8 +412,8 @@
   }
   function network() { if (!D.net) D.net = new Lampa.Reguest(); return D.net; }
   function errCode(xhr) { return (xhr && (xhr.status || xhr.decode_code)) || -1; }
-  // « (код 404)» или « (нет ответа)» — для сообщений об ошибке.
-  function codeNote(code) { return typeof code === 'number' && code > 0 ? ' (код ' + code + ')' : code === 'parse' ? ' (файл повреждён)' : ' (нет ответа)'; }
+  // « (код 404)», « (файл повреждён)» или « (нет ответа)» — для сообщений об ошибке. 408 — свой: waitFor не дождался.
+  function codeNote(code) { return code === 408 ? ' (нет ответа за ' + WAIT_MAX / 1000 + ' с)' : typeof code === 'number' && code > 0 ? ' (код ' + code + ')' : code === 'parse' ? ' (файл повреждён)' : ' (нет ответа)'; }
   function nw() { return (D.man && D.man.nw) || 0; }
   function lastW() { return nw() - 1; }
   function vf() { return (D.man && D.man.vf) || 102; }
@@ -539,7 +539,7 @@
         try { parseFile(file, json); } catch (ex) { log('parse', file, ex && ex.message); err = 'parse'; }
       }
       finish(err);
-    }, function (xhr) { finish(errCode(xhr)); }, false, { timeout: T_FILE, cache: { life: CACHE_LIFE } });
+    }, function (xhr, ex) { finish(ex === 'parsererror' || (xhr && xhr.status === 200) ? 'parse' : errCode(xhr)); }, false, { timeout: T_FILE, cache: { life: CACHE_LIFE } });
     function finish(err) {
       var list = D.wait[file] || [], i;
       delete D.wait[file];
@@ -1424,10 +1424,11 @@
     O = ORIGIN[v];
     return O ? (chip && O.short ? O.short : O.title) : v;
   }
+  // p=w — последняя неделя чарта: у мира это эта неделя, у России — 21–27 февраля 2022, «последняя неделя».
   function periodText(o, chip) {
-    var m;
+    var m, r;
     if (!o.p) return '';
-    if (o.p === 'w') return chip ? 'Эта неделя' : 'эта неделя';
+    if (o.p === 'w') { r = chartRange(o.c); return r && r[1] < lastW() ? (chip ? 'Последняя неделя' : 'последняя неделя') : chip ? 'Эта неделя' : 'эта неделя'; }
     if ((m = /^w(\d+)$/.exec(o.p))) return weekLabel(+m[1], { short: true });
     if ((m = /^y(\d{4})$/.exec(o.p))) return m[1];
     return '';
@@ -2733,35 +2734,71 @@
     T = list && list[1] && list[1].length ? D.T[owner(list[1][0])] : null;
     return T ? 'сейчас №1: ' + titleName(T) : '';
   }
-  function showChartMenu(o, cfg) {
-    var items = [{ title: 'Весь мир', subtitle: '4 списка, часы и просмотры', cc: '', selected: !o.c }], recent = recentCountries(), i;
-    function country(code) { items.push({ title: countryName(code), subtitle: countrySub(code), cc: code, selected: code === o.c }); }
+  // «2024», «2–8 нояб. 2026» — период p в подписях «нет данных за …».
+  function periodName(p) {
+    var m;
+    if ((m = /^y(\d{4})$/.exec(p || ''))) return m[1];
+    if ((m = /^w(\d+)$/.exec(p || ''))) return weekLabel(+m[1], { short: true });
+    return 'этот период';
+  }
+  // Пункт страны с учётом периода подбора: за период нет недель — приглушён «нет данных за 2024» (без тупиков,
+  // §9); файл страны в памяти — №1 периода: «№1 в 2024: …», «№1 недели: …»; иначе — №1 этой недели.
+  function countryItem(code, o) {
+    var item = { title: countryName(code), cc: code, selected: code === o.c }, m, lead = '';
+    if (o.p && code !== o.c && !periodRange(code, o.p)) {
+      item.subtitle = 'нет данных за ' + periodName(o.p); item.ghost = true; item.noenter = true;
+      return item;
+    }
+    if (D.cty[code] && (m = /^y(\d{4})$/.exec(o.p))) { lead = yearLeader(+m[1], code); if (lead) lead = '№1 в ' + m[1] + ': ' + lead; }
+    else if (D.cty[code] && (m = /^w(\d+)$/.exec(o.p))) { lead = weekLeader(+m[1], code); if (lead) lead = '№1 недели: ' + lead; }
+    item.subtitle = lead || countrySub(code);
+    return item;
+  }
+  // reg — регион, из которого вернулись «Назад»: фокус на нём (selected без галочки, nomark), а текущий чарт
+  // отмечен picked — галочка видна, фокус её не берёт (select.js:209-221). Каждая страна — один раз.
+  function showChartMenu(o, cfg, reg) {
+    var back = reg != null && reg >= 0, recent = recentCountries(), seen = {}, items, i;
+    items = [{ title: 'Весь мир', subtitle: '4 списка, часы и просмотры', cc: '', selected: !o.c && !back, picked: !o.c && back }];
+    function country(code) {
+      var item;
+      if (seen[code]) return;
+      seen[code] = true;
+      item = countryItem(code, o);
+      if (back && item.selected) { item.selected = false; item.picked = true; }
+      items.push(item);
+    }
     if (recent.length) { items.push({ title: 'Недавние', separator: true }); for (i = 0; i < recent.length; i++) country(recent[i]); }
     items.push({ title: 'Часто', separator: true });
     for (i = 0; i < FREQUENT.length; i++) country(FREQUENT[i]);
     items.push({ title: 'Все страны', separator: true });
-    for (i = 0; i < REGIONS.length; i++) items.push({ title: REGIONS[i].title + ' ›', region: i });
+    for (i = 0; i < REGIONS.length; i++) items.push({ title: REGIONS[i].title + ' ›', region: i, selected: back && i === reg });
     Lampa.Select.show({
       title: 'Чарт', items: items,
+      onDraw: function (item, el) { if (el.region != null && el.selected && item && item.addClass) item.addClass('nomark'); },
       onSelect: function (a) { if (a.region != null) showRegionMenu(REGIONS[a.region], o, cfg); else pickCountry(a.cc, o, cfg); },
       onBack: cfg.back
     });
   }
-  // Подменю региона возвращается в «Чарт» через onBack (приём content_filter/menu.js:242-253).
+  // Подменю региона возвращается в «Чарт» через onBack (приём content_filter/menu.js:242-253), фокус — на регион.
   function showRegionMenu(R, o, cfg) {
     var items = [], i;
-    for (i = 0; i < R.codes.length; i++) items.push({ title: countryName(R.codes[i]), subtitle: countrySub(R.codes[i]), cc: R.codes[i], selected: R.codes[i] === o.c });
+    for (i = 0; i < R.codes.length; i++) items.push(countryItem(R.codes[i], o));
     Lampa.Select.show({
       title: R.title, items: items,
       onSelect: function (a) { pickCountry(a.cc, o, cfg); },
-      onBack: function () { showChartMenu(o, cfg); }
+      onBack: function () { showChartMenu(o, cfg, REGIONS.indexOf(R)); }
     });
   }
-  // Страна: файл грузится под индикатором; ошибка — Noty «Не удалось загрузить чарт: …», подбор прежний.
+  // Страна: файл грузится под слоем «Загружаю чарт: …» («Назад» — отмена); ошибка — Noty «Не удалось загрузить
+  // чарт: …», подбор прежний. Период, которого нет в чарте страны, сбрасывается с Noty: экран не бывает пустым.
   function pickCountry(code, o, cfg) {
     var o2 = withNf(o, 'c', code || '');
+    if (o2.p && !periodRange(o2.c, o2.p)) {
+      noty((code ? countryName(code) : 'Весь мир') + ': нет данных за ' + periodName(o2.p) + ' — показываю всё время');
+      o2.p = '';
+    }
     if (!code) { cfg.pick(o2); return; }
-    ensure(['index', 'global', 'country/' + code], function () { addRecent(code); cfg.pick(o2); }, { fail: cfg.back });
+    ensure(['index', 'global', 'country/' + code], function () { addRecent(code); cfg.pick(o2); }, { from: cfg.from, fail: cfg.back });
   }
   // «Тип»: всё · фильмы · сериалы · «Списки Netflix» · галочка «Включать прямые эфиры».
   function showTypeMenu(o, cfg) {
@@ -2846,11 +2883,14 @@
   }
   // «Год»: «Когда был в топе» (p) и «Год выхода» (r); в сводном меню — по отдельности.
   function showYearMenu(o, cfg, withP, withR) {
-    var items = [], r = chartRange(o.c), ys = years(), cur = o.p || '', curW = /^w\d+$/.test(cur) ? +cur.slice(1) : -1, i, Y, yr, n, isCur;
+    var items = [], r = chartRange(o.c), ys = years(), cur = o.p || '', curW = /^w\d+$/.test(cur) ? +cur.slice(1) : -1, wc = cur ? -1 : weeksCursor(activeObj(), o.c), i, Y, yr, n, isCur;
+    // История топа без p: фокус — на неделе ленты в «Выбрать неделю…».
+    if (wc >= 0) curW = wc;
     if (withP) {
       if (withR) items.push({ title: 'Когда был в топе', separator: true });
-      items.push(liveItem({ title: 'Всё время', pv: '', selected: !cur }, withNf(o, 'p', ''), !cur));
-      items.push(liveItem({ title: 'Эта неделя', subtitle: r ? weekLabel(r[1], { noYear: r[1] === lastW() }) : '', pv: 'w', selected: cur === 'w' }, withNf(o, 'p', 'w'), cur === 'w'));
+      items.push(liveItem({ title: 'Всё время', pv: '', selected: !cur && wc < 0 }, withNf(o, 'p', ''), !cur));
+      // У чарта, который кончился раньше мира (Россия, февраль 2022), «эта неделя» — его последняя неделя.
+      items.push(liveItem({ title: r && r[1] < lastW() ? 'Последняя неделя' : 'Эта неделя', subtitle: r ? weekLabel(r[1], { noYear: r[1] === lastW() }) : '', pv: 'w', selected: cur === 'w' }, withNf(o, 'p', 'w'), cur === 'w'));
       items.push({ title: 'Выбрать неделю…', subtitle: curW >= 0 ? weekLabel(curW, { short: true }) : '', week: true, selected: curW >= 0 });
       for (i = ys.length - 1; i >= 0; i--) {
         Y = ys[i]; yr = yearInChart(Y, o.c); isCur = cur === 'y' + Y;
@@ -2939,45 +2979,110 @@
       onBack: cfg.back
     });
   }
+  // Разделы, которые на этом экране ничего не меняют, — с причиной (§5.5–5.7). Зал славы и его сетки — один
+  // мировой чарт за всё время и свой порядок; рейтинг за 91 день — так же; неделя и легенды держат свой порядок;
+  // История — порядок чарта (её неделю выбирает «Год в топе»). s — и значок «Сортировка» в шапке.
+  function lockedSecs(a) {
+    var comp = a && a.component, key = String((a && a.nf_list) || ''), L = {};
+    if (comp === 'netflix_hall' || (comp === 'netflix_grid' && /^hall:/.test(key))) {
+      L.c = 'в Зале славы — только мировой чарт'; L.p = 'в Зале славы — всё время'; L.s = 'у списков Зала славы свой порядок';
+    } else if (comp === 'netflix_grid' && key === 'at') {
+      L.c = 'рейтинг Netflix — только мировой'; L.p = 'рейтинг — за 91 день'; L.s = 'у рейтинга свой порядок';
+    } else if (comp === 'netflix_grid' && /^wk\d+$/.test(key)) {
+      L.p = 'неделя задана списком'; L.s = 'у чарта недели свой порядок';
+    } else if (comp === 'netflix_grid' && key === 'lg') L.s = 'у легенд свой порядок';
+    else if (comp === 'netflix_weeks') L.s = 'История держит порядок чарта';
+    // Свой пустой экран (screenEmpty): сортировка пустоту не исправит — ни запоминать её, ни пересобирать экран.
+    if (a && a.nfDead) L.s = 'на пустом экране сортировать нечего';
+    return L;
+  }
+  // Неделя ленты Истории топа (nf_w) в пределах чарта c; −1 — не История.
+  function weeksCursor(a, c) {
+    var r = chartRange(c), W;
+    if (!a || a.component !== 'netflix_weeks' || !r) return -1;
+    W = parseInt(a.nf_w, 10);
+    return isNaN(W) ? r[1] : Math.max(r[0], Math.min(r[1], W));
+  }
+  // «Уточнить» (§6.3): до трёх уточнений в одно нажатие — самая большая группа жанра, «Откуда» и года в топе
+  // (если год задан — года выхода) среди результата черновика. В группе ≥ 5 тайтлов и меньше, чем сейчас.
+  function refineItems(draft, L, weeks) {
+    var base = resultTitles(draft), n = base.length, out = [], b, ys = years(), i, c;
+    function top(defs, test) {
+      var best = null, j, k, cnt;
+      for (j = 0; j < defs.length; j++) {
+        if (!defs[j].key || defs[j].key === 'asia') continue;
+        cnt = 0;
+        for (k = 0; k < base.length; k++) if (test(base[k], defs[j])) cnt++;
+        if (cnt >= 5 && cnt < n && (!best || cnt > best.n)) best = { G: defs[j], n: cnt };
+      }
+      return best;
+    }
+    function add(title, value, cnt, o2) { out.push({ title: title + ': ' + value, subtitle: '→ ' + fmtInt(cnt), refine: o2 }); }
+    if (n < 6) return out;
+    if (!draft.g.length && (b = top(GENRES, function (T, G) { return xpMatch(T, 'g', G.key); }))) add('Жанр', b.G.title, b.n, withNf(draft, 'g', [b.G.key]));
+    if (!draft.o && (b = top(ORIGINS, function (T, G) { return xpMatch(T, 'o', G.key); }))) add('Откуда', b.G.title, b.n, withNf(draft, 'o', b.G.key));
+    if (!draft.p && !L.p && !weeks) {
+      b = null;
+      for (i = ys.length - 1; i >= 0; i--) {
+        if (!yearInChart(ys[i], draft.c)) continue;
+        c = countNf(withNf(draft, 'p', 'y' + ys[i]));
+        if (c >= 5 && c < n && (!b || c > b.n)) b = { Y: ys[i], n: c };
+      }
+      if (b) add('Год в топе', String(b.Y), b.n, withNf(draft, 'p', 'y' + b.Y));
+    } else if (!draft.r && (b = top(RELEASES, function (T, R) { return !!T.id && passRelease(T, R.key); }))) add('Год выхода', b.G.title, b.n, withNf(draft, 'r', b.G.key));
+    return out;
+  }
   // Сводное меню «Фильтры» (§6.3): подбор копится без пересборки; «Показать N» или «Назад» применяют.
   // Только что изменённый раздел — selected: фокус возвращается на него, а не на «Показать».
+  // Сортировку из этого меню запоминает netflix_sort, как значок шапки (§4.6).
   function showSummary(draft, orig, from, changed) {
-    var n = countNf(draft), showEl = null, items;
-    function sec(key, title, value) { return { title: title, subtitle: value, sec: key, selected: changed === key }; }
-    items = [
-      { title: 'Показать ' + fmtInt(n), show: true, ghost: !n, noenter: !n },
+    var n = countNf(draft), a = activeObj() || {}, L = lockedSecs(a), wc = weeksCursor(a, draft.c), showEl = null, items, refine;
+    function sec(key, title, value) {
+      if (L[key]) return { title: title, subtitle: L[key], ghost: true, noenter: true };
+      return { title: title, subtitle: value, sec: key, selected: changed === key };
+    }
+    function apply(d) {
+      if (!L.s && (d.s || '') !== (orig.s || '')) storageSet('netflix_sort', d.s || '');
+      applyNf(d, { from: from });
+    }
+    items = [{ title: 'Показать ' + fmtInt(n), show: true, ghost: !n, noenter: !n }];
+    refine = refineItems(draft, L, wc >= 0);
+    if (refine.length) items = items.concat([{ title: 'Уточнить', separator: true }], refine, [{ title: 'Фильтры', separator: true }]);
+    items = items.concat([
       sec('c', 'Чарт', draft.c ? countryName(draft.c) : 'весь мир'),
       sec('t', 'Тип', draft.t ? TYPE[draft.t].title : 'фильмы и сериалы'),
       sec('g', 'Жанр', genreText(draft) || 'любой'),
       sec('o', 'Откуда', originText(draft.o) || 'любая'),
-      sec('p', 'Год в топе', periodText(draft) || 'всё время'),
+      // На Истории топа «Год в топе» — неделя ленты: пусто — та, что на экране.
+      sec('p', 'Год в топе', periodText(draft) || (wc >= 0 ? weekLabel(wc, { short: true }) : 'всё время')),
       sec('r', 'Год выхода', draft.r ? RELEASE[draft.r].title : 'любой'),
       sec('s', 'Сортировка', SORT[effSort(draft)].title.toLowerCase()),
       { title: 'Прямые эфиры', subtitle: 'WWE, бокс, NFL в списках тайтлов', checkbox: true, checked: !!draft.lv, lvbox: true },
       { title: '', separator: true },
       { title: 'Сбросить всё', reset: true }
-    ];
+    ]);
     Lampa.Select.show({
       title: 'Подбор · найдено ' + fmtInt(n), items: items,
       onDraw: function (item, el) { if (el.show) showEl = item; },
-      onSelect: function (a) {
+      onSelect: function (a2) {
         var o2;
-        if (a.show) {
-          if (countNf(draft)) applyNf(draft, { from: from });
+        if (a2.show) {
+          if (countNf(draft)) apply(draft);
           else { noty('0 результатов — подбор не изменён'); showSummary(draft, orig, from, ''); }
           return;
         }
-        if (a.reset) { o2 = emptyNf(); o2.s = draft.s; applyNf(o2, { from: from }); return; }
-        facetMenu(a.sec, draft, {
+        if (a2.refine) { showSummary(a2.refine, orig, from, ''); return; }
+        if (a2.reset) { o2 = emptyNf(); o2.s = draft.s; apply(o2); return; }
+        facetMenu(a2.sec, draft, {
           from: from,
-          back: function () { showSummary(draft, orig, from, a.sec); },
-          pick: function (o3) { showSummary(o3, orig, from, a.sec); }
+          back: function () { showSummary(draft, orig, from, a2.sec); },
+          pick: function (o3) { showSummary(o3, orig, from, a2.sec); }
         });
       },
-      onCheck: function (a) {
+      onCheck: function (a2) {
         var k;
-        if (!a.lvbox) return;
-        draft.lv = a.checked ? '1' : '';
+        if (!a2.lvbox) return;
+        draft.lv = a2.checked ? '1' : '';
         k = fmtInt(countNf(draft));
         if (showEl) showEl.find('.selectbox-item__title').text('Показать ' + k);
         try { Lampa.Select.render().find('.selectbox__title').text('Подбор · найдено ' + k); } catch (e) {}
@@ -2985,7 +3090,7 @@
       onBack: function () {
         if (buildNf(draft) === buildNf(orig)) { Lampa.Controller.toggle(from); return; }
         if (!countNf(draft)) { noty('0 результатов — подбор не изменён'); Lampa.Controller.toggle(from); return; }
-        applyNf(draft, { from: from });
+        apply(draft);
       }
     });
   }
@@ -3003,58 +3108,111 @@
     a.unshift(code);
     storageSet('netflix_cc_recent', a.slice(0, 3));
   }
+  // netflix_filter — последний подбор главного экрана для плитки «↩ Прошлый подбор» (§4.6). netflix_sort здесь
+  // не пишется: его пишут только значок «Сортировка» в шапке и одноимённый раздел сводного меню — иначе подборка
+  // вроде «Рекорды №1» (s=streak) навсегда сортировала бы каждый следующий вход.
   function remember(o, canon, mode) {
     if (mode !== 'world') storageSet('netflix_filter', canon);
-    storageSet('netflix_sort', o.s || '');
     if (o.c) addRecent(o.c);
   }
-  function loaderOn(act, on) { try { if (act && act.activity) act.activity.loader(on); } catch (e) {} }
-  // Действию нужны файлы: сразу, если всё в памяти; иначе ждём до 20 с (§9). Файл страны — под
-  // индикатором активности, индекс — с Noty «Загружаю каталог Netflix…». Действует последнее нажатие
-  // и только на той же активности.
+  function ctlName() { try { return (Lampa.Controller.enabled() || {}).name || ''; } catch (e) { return ''; } }
+  // Слой ожидания: Lampa.Loading (interaction/loading.js) — подпись со значком внизу экрана, ряды под ним видны,
+  // пульт у слоя; «Назад» и стрелки зовут cancel. Без Loading (старые сборки) — Noty, а действие ждёт, пока
+  // пульт и фокус на месте. held() — пульт всё ещё у слоя; stop() убирает слой.
+  function waitLayer(text, cancel) {
+    var native = !!(Lampa.Loading && Lampa.Loading.start && Lampa.Loading.stop), ctl0 = ctlName(), f0 = document.querySelector('.focus'), on = true;
+    if (native) { try { Lampa.Loading.start(cancel, text); } catch (e) { native = false; } }
+    if (!native) noty(text);
+    return {
+      held: function () { return native ? ctlName() === 'loading' : ctlName() === ctl0 && document.querySelector('.focus') === f0; },
+      stop: function () {
+        var now;
+        if (!on) return;
+        on = false;
+        if (!native) return;
+        now = ctlName();
+        try { Lampa.Loading.stop(); } catch (e) {}
+        // Пульт уже забрал кто-то другой: Loading.stop вернул бы его прежнему владельцу.
+        if (now && now !== 'loading') Lampa.Controller.toggle(now);
+      }
+    };
+  }
+  // Действию нужны файлы: сразу, если всё в памяти; иначе ждём до 20 с (§9) под слоем «Загружаю каталог
+  // Netflix…» или «Загружаю чарт: Япония…». «Назад» или стрелка отменяют (PENDING сдвигается). Действие идёт,
+  // только если это последнее нажатие, экран тот же и пульт всё ещё у слоя: меню не всплывает через несколько
+  // секунд поверх того, что зритель уже смотрит. opts: {from — куда вернуть пульт, fail — отмена и ошибка}.
   var PENDING = 0;
   function ensure(files, go, opts) {
-    var token, act, country = '', i;
+    var from = (opts && opts.from) || 'content', token, act, layer, country = '', i;
     for (i = 0; i < files.length; i++) if (files[i].indexOf('country/') === 0) country = files[i].slice(8);
     if (loaded(files)) { go(); return; }
     token = ++PENDING; act = activeObj();
-    if (country && D.files.index && D.files.global) loaderOn(act, true);
-    else noty('Загружаю каталог Netflix…');
-    waitFor(files, WAIT_MAX, function () {
-      loaderOn(act, false);
-      if (token !== PENDING || activeObj() !== act) return;
-      go();
-    }, function (code) {
-      loaderOn(act, false);
+    // Пункт Select уже выбран и окно скрыто, а пульт ещё у него: ↓ OK выбрали бы невидимую страну.
+    if (ctlName() === 'select' && !$('body').hasClass('selectbox--open')) Lampa.Controller.toggle(from);
+    function back() {
+      if (activeObj() !== act) return;
+      if (opts && opts.fail) opts.fail(); else Lampa.Controller.toggle(from);
+    }
+    layer = waitLayer(country && D.files.index && D.files.global ? 'Загружаю чарт: ' + countryName(country) + '…' : 'Загружаю каталог Netflix…', function () {
       if (token !== PENDING) return;
-      if (country && D.err['country/' + country]) noty('Не удалось загрузить чарт: ' + countryName(country));
+      PENDING++;
+      layer.stop();
+      back();
+    });
+    waitFor(files, WAIT_MAX, function () {
+      var held;
+      if (token !== PENDING) return;
+      held = layer.held(); layer.stop();
+      if (held && activeObj() === act) go();
+    }, function (code) {
+      var held, cf = country ? 'country/' + country : '';
+      if (token !== PENDING) return;
+      held = layer.held(); layer.stop();
+      // Каталог в памяти, а страны нет (ошибка или 20 с без ответа) — виновата страна (§9).
+      if (cf && !D.files[cf] && !D.err.index && !D.err.global) noty('Не удалось загрузить чарт: ' + countryName(country));
       else noty('Каталог не загрузился' + codeNote(code));
-      if (opts && opts.fail) opts.fail();
-      else if (activeObj() === act) Lampa.Controller.toggle((opts && opts.from) || 'content');
+      if (held) back();
     });
   }
   // Из «Мира» — push («Назад» вернёт к нему), из любого другого вида — replace, чтобы «Назад» не ходил
   // по каждому щелчку (multi-fan.js:500-509). Значок сортировки в шапке — всегда replace (dorama.js:631-645).
+  // Сброс подбора в «Мир» — шаг назад к «Миру» под ним, никогда не второй «Мир» в стеке.
   function applyNf(o, opts) {
-    var canon = buildNf(o), mode = nfMode(o), files = mode === 'world' ? [] : ['index', 'global'];
+    var from = (opts && opts.from) || 'content', a0 = activeObj(), wk = -1, r, canon, mode, files;
+    // История топа (§5.6): неделя или год из «Фильтров» — это неделя ленты nf_w; периода в её nf нет.
+    if (a0 && a0.component === 'netflix_weeks' && o.p) {
+      r = periodRange(o.c, o.p);
+      if (r) wk = r[1];
+      o = withNf(o, 'p', '');
+    }
+    canon = buildNf(o); mode = nfMode(o); files = mode === 'world' ? [] : ['index', 'global'];
     if (o.c) files.push('country/' + o.c);
     ensure(files, function () {
-      var cur = activeObj(), obj = { url: '', title: nfTitle(o), component: 'netflix', source: 'tmdb', page: 1, nf: canon }, all, prev;
-      remember(o, canon, mode);
+      var cur = activeObj(), obj = { url: '', title: nfTitle(o), component: 'netflix', source: 'tmdb', page: 1, nf: canon }, rep, all, prev;
       // Сетка, История топа и Зал славы: подбор и сортировка в шапке перестраивают сам этот экран (§5.5–5.7).
       if (cur && /^netflix_/.test(cur.component || '')) {
-        if ((cur.nf || '') === canon) Lampa.Controller.toggle((opts && opts.from) || 'content');
-        else Lampa.Activity.replace({ title: screenTitle(cur, o), nf: canon });
+        rep = { title: screenTitle(cur, o), nf: canon };
+        if (cur.component === 'netflix_weeks' && wk >= 0) rep.nf_w = String(wk);
+        if ((cur.nf || '') === canon && (rep.nf_w === undefined || rep.nf_w === String(cur.nf_w))) Lampa.Controller.toggle(from);
+        else Lampa.Activity.replace(rep);
         return;
       }
+      remember(o, canon, mode);
       if (!cur || cur.component !== 'netflix') { Lampa.Activity.push(obj); return; }
-      if ((cur.nf || '') === canon) { Lampa.Controller.toggle((opts && opts.from) || 'content'); return; }
-      if (nfMode(parseNf(cur.nf)) === 'world' && !(opts && opts.replace)) { Lampa.Activity.push(obj); return; }
-      // Подбор → «Мир», который уже лежит под ним, — шаг назад, а не второй «Мир» в стеке.
+      if ((cur.nf || '') === canon) { Lampa.Controller.toggle(from); return; }
+      if (nfMode(parseNf(cur.nf)) === 'world') {
+        if (opts && opts.replace) Lampa.Activity.replace(obj); else Lampa.Activity.push(obj);
+        return;
+      }
+      // Подбор → «Мир»: если под ним «Мир» — шаг назад к нему; другая сортировка — он её и примет.
       if (mode === 'world') {
         all = Lampa.Activity.all ? Lampa.Activity.all() : null;
         prev = all && all.length > 1 ? all[all.length - 2] : null;
-        if (prev && prev.component === 'netflix' && (prev.nf || '') === canon && Lampa.Activity.backward) { Lampa.Activity.backward(); return; }
+        if (prev && prev.component === 'netflix' && nfMode(parseNf(prev.nf)) === 'world' && Lampa.Activity.backward) {
+          Lampa.Activity.backward();
+          if ((prev.nf || '') !== canon) Lampa.Activity.replace(obj);
+          return;
+        }
       }
       Lampa.Activity.replace(obj);
     }, opts);
@@ -3279,14 +3437,25 @@
   // §9: своё пустое состояние, не comp.empty() (там кнопка CUB, main.js:21-48, category.js:30-56).
   // Empty в 3.4.6 сам добавляет «Обновить» с Activity.replace().
   function stateDescr(code, c) {
+    var cf = c ? 'country/' + c : '', e = cf ? D.err[cf] : null, why;
+    // Испорченный файл — не беда сети: «проверьте интернет» тут ни при чём.
+    function hint(k) { return k === 'parse' ? '. Попробуйте обновить позже.' : '. Данные лежат на drshpackz.github.io — проверьте интернет.'; }
     if (code === 'schema') return 'Обновите плагин netflix.js: данные Netflix пришли в новом формате.';
-    if (c && D.err['country/' + c]) return 'Не удалось загрузить чарт: ' + countryName(c) + codeNote(D.err['country/' + c].code) + '. Данные лежат на drshpackz.github.io — проверьте интернет.';
     if (code === 'build') return 'Не удалось собрать экран из данных Netflix. Попробуйте обновить.';
     if (code === 'empty') return 'Здесь пусто: подбор не оставил ни одной позиции. Ослабьте его значком «Фильтры» в шапке.';
-    return 'Не удалось загрузить чарты' + codeNote(code) + '. Данные лежат на drshpackz.github.io — проверьте интернет.';
+    // Файл страны упал или не пришёл за 20 с, а каталог цел, — в сообщении страна (§9).
+    if (cf && !D.files[cf] && (e || (!D.err.index && !D.err.global))) {
+      why = e ? e.code : code;
+      return 'Не удалось загрузить чарт: ' + countryName(c) + codeNote(why) + hint(why);
+    }
+    return 'Не удалось загрузить чарты' + codeNote(code) + hint(code);
   }
+  // Свой пустой экран помечает объект активности nfDead (неперечисляемое поле: в Storage и в «Обновить»
+  // не уходит). Значки шапки: при ошибке прячутся оба, при «Здесь пусто» остаётся «Фильтры» (§9).
   function screenEmpty(comp, code, c) {
-    var empty = new Lampa.Empty({ title: MENU_TITLE, descr: stateDescr(code, c) });
+    var empty = new Lampa.Empty({ title: MENU_TITLE, descr: stateDescr(code, c) }), obj = comp.activity && comp.activity.object;
+    if (obj) { try { Object.defineProperty(obj, 'nfDead', { value: String(code), configurable: true, writable: true, enumerable: false }); } catch (e) {} }
+    if (obj && obj === activeObj() && HEAD.sync) HEAD.sync(obj);
     comp.render().append(empty.render(true));
     comp.start = empty.start.bind(empty);
     comp.activity.loader(false);
@@ -4353,14 +4522,24 @@
     '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
     '<path d="M4 5H20L13.8 12.4V18L10.2 19.8V12.4L4 5Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>';
 
-  // Два значка в шапке (§5.1): «Сортировка» — на netflix и netflix_grid, «Фильтры» — на всех четырёх
-  // экранах. DOM-приём dorama.js:647-658: работает и в 2.x, на чужих активностях — класс hide.
+  // Два значка в шапке (§5.1): «Сортировка» — на netflix и сетках с сортируемым списком (у hall:*, wkNNN, at, lg
+  // свой порядок), «Фильтры» — на всех четырёх экранах. На своём пустом экране при ошибке прячутся оба, при «Здесь
+  // пусто» остаётся «Фильтры». DOM-приём dorama.js:647-658: работает и в 2.x, на чужих активностях — класс hide.
+  var HEAD = { sync: null };
   function addHeadButtons() {
     var actions = $('.head .head__actions').eq(0), bSort, bFilter;
     if (!actions.length || !actions.prepend) return;
     bFilter = $('<div class="head__action selector nf-head-filter hide" title="Фильтры">' + ICON_FILTER + '</div>');
     bSort = $('<div class="head__action selector nf-head-sort hide" title="Сортировка">' + ICON_SORT + '</div>');
-    bFilter.on('hover:enter', function () { openChip('all', currentNf(), 'head'); });
+    bFilter.on('hover:enter', function () {
+      var a = activeObj() || {}, cur = currentNf(), L = lockedSecs(a);
+      // Чего экран не учитывает, в сводное меню не идёт: «Показать N» и меню «Чарт» — по экрану. У Истории p —
+      // не фильтр, а неделя ленты: её показывает nf_w.
+      if (L.c) cur.c = '';
+      if (L.p || a.component === 'netflix_weeks') cur.p = '';
+      if (L.s && !a.nfDead) cur.s = '';
+      openChip('all', cur, 'head');
+    });
     bSort.on('hover:enter', function () {
       var cur = currentNf();
       showSortMenu(cur, {
@@ -4375,12 +4554,14 @@
     });
     actions.prepend(bFilter);
     actions.prepend(bSort);
-    function sync(component) {
-      bSort.toggleClass('hide', !(component === 'netflix' || component === 'netflix_grid'));
-      bFilter.toggleClass('hide', !(component === 'netflix' || component === 'netflix_grid' || component === 'netflix_weeks' || component === 'netflix_hall'));
+    function sync(a) {
+      var comp = (a && a.component) || '', dead = a && a.nfDead;
+      bSort.toggleClass('hide', !(comp === 'netflix' || comp === 'netflix_grid') || !!lockedSecs(a).s);
+      bFilter.toggleClass('hide', !/^netflix(_grid|_weeks|_hall)?$/.test(comp) || (!!dead && dead !== 'empty'));
     }
-    sync((activeObj() || {}).component);
-    Lampa.Listener.follow('activity', function (e) { if (e && e.type === 'start') sync(e.component); });
+    HEAD.sync = sync;
+    sync(activeObj());
+    Lampa.Listener.follow('activity', function (e) { if (e && e.type === 'start') sync(e.object || { component: e.component }); });
   }
   // Пункт меню всегда открывает «Мир» (§5.1) с последней сортировкой; прошлый подбор ждёт на плитке.
   function openRoot() {
