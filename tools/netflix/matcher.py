@@ -75,6 +75,17 @@ def tsim(q, names):
     return best
 
 
+def foreign(row, c):
+    """A non-English candidate with neither the language nor the origin of any country where the title charted."""
+    ol = c.get('original_language') or ''
+    if not ol or ol == 'en':
+        return False
+    if any(ol in COUNTRY_LANG.get(cc, ()) for cc in row['countries']):
+        return False
+    oc = set(c.get('origin_country') or [])
+    return not (oc & set(row['countries']))
+
+
 def score(row, c, kind):
     """Score of one TMDB search result for a Netflix title: (score, reasons)."""
     name = c.get('name') or c.get('title') or ''
@@ -111,6 +122,13 @@ def score(row, c, kind):
         if kind == 'movie' and gap > 15 * 365 and row['lang'] in (0, 1) and (c.get('vote_count') or 0) < 100:
             s -= 0.3
             why.append('old-obscure')
+        # A title of the country charts only (never in the global top) and a candidate in a language other than
+        # English that is neither a charting country's language nor from a charting country, more than 10 years
+        # older than the first week: a foreign namesake. Once Upon a Time in the East, No. 1 in Slovakia 2024
+        # (Vojna policajtov), is not the 1974 Quebec drama. Old English films stay: catalogue films chart anywhere.
+        if row['lang'] == -1 and gap > 10 * 365 and foreign(row, c):
+            s -= 0.4
+            why.append('old-foreign')
     ol = c.get('original_language') or ''
     if row['lang'] == 0:
         s += 0.15 if ol == 'en' else -0.3
