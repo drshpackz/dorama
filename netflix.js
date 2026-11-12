@@ -2636,8 +2636,14 @@
   var TR_TYPE = { Trailer: 'T', Teaser: 'Z', Clip: 'C' };   // вид ролика TMDB → буква в tr
   var TR_RANK = { Trailer: 0, Teaser: 1, Clip: 2 };
   var TR_WAIT = 10000;     // мс до ready моста, иначе — плеер Lampa (§8.6 п. 3)
-  var TR_NUDGE = 8000;     // мс после ready: ролик не пошёл сам — подсказка «нажмите OK»
+  var TR_NUDGE = 8000;     // мс после ready: ролик не пошёл сам (и это не реклама) — подсказка «нажмите OK»
   var TR_IDLE = 5000;      // мс игры, после которых подписи оверлея прячутся
+  var TR_CARD = 2500;      // мс карточки места перед роликом в «Отсчёте»
+  var TR_FINAL = 30000;    // мс финальной карточки «№1 недели», потом оверлей закрывается сам
+  var TR_SUB = /\[Subtitled\]|ENG SUB|SUB\]|субтитр/i;   // ролик с субтитрами в кадре: звук не язык ролика (флаг s)
+  // Коды YouTube «ролика нет или встраивать нельзя» (IFrame API onError): ключ мёртвый, ищем другой.
+  var TR_GONE = { 100: 1, 101: 1, 150: 1 };
+  var TR_DEAD = {};        // ключи, которые YouTube не отдал в этой сессии: trailerKeys и поиск их пропускают
   var CAP_TEXT = {
     ru: 'Субтитры: русские',
     auto: 'Субтитры: автоперевод (не гарантирован)',
@@ -2649,18 +2655,30 @@
   var TR_NET = null;
   var TR_FIND = {};        // n → колбэки, пока идёт поиск роликов в TMDB
 
-  // §3.4: «ru:T:KEY en:T:KEY» → {ru: {lang, type, key}, en: {…}}.
+  // §3.4: «ru:T:KEY en:T:KEY:s» → {ru: {lang, type, key, flags}, en: {…}}; flags — '' или 's'. Ключи, которые
+  // YouTube в этой сессии не отдал (TR_DEAD), не возвращаются: подписи и кнопки не обещают мёртвый ролик.
   function trailerKeys(T) {
     var out = {}, parts = String((T && T.tr) || '').split(' '), i, f;
     for (i = 0; i < parts.length; i++) {
       f = parts[i].split(':');
-      if (f.length >= 3 && (f[0] === 'ru' || f[0] === 'en') && !out[f[0]] && /^[A-Za-z0-9_-]{11}$/.test(f[2])) out[f[0]] = { lang: f[0], type: f[1], key: f[2] };
+      if (f.length >= 3 && (f[0] === 'ru' || f[0] === 'en') && !out[f[0]] && /^[A-Za-z0-9_-]{11}$/.test(f[2]) && !TR_DEAD[f[2]]) out[f[0]] = { lang: f[0], type: f[1], key: f[2], flags: f[3] || '' };
     }
     return out;
   }
-  function trailerLabel(k) { return (TR_KIND[k.type] || 'Трейлер') + ' · ' + (k.lang === 'ru' ? 'русская озвучка' : 'английский'); }
+  // Звук ролика, а не тег языка TMDB. Флаг s — субтитры в кадре: «[Subtitled]» у английского — звук оригинала,
+  // «(Субтитры)» у русского — звук английский (у неанглоязычного тайтла — оригинала).
+  function audioLabel(k, T) {
+    if (/s/.test(k.flags || '')) {
+      if (k.lang === 'en') return 'оригинал, англ. субтитры';
+      return (T && T.ol && T.ol !== 'en' ? 'оригинал' : 'англ. звук') + ', рус. субтитры';
+    }
+    return k.lang === 'ru' ? 'русская озвучка' : 'английский';
+  }
+  // Русский звук: субтитры YouTube не навязываются и строки о них нет.
+  function ruAudio(k) { return !!k && k.lang === 'ru' && !/s/.test(k.flags || ''); }
+  function trailerLabel(k, T) { return (TR_KIND[k.type] || 'Трейлер') + ' · ' + audioLabel(k, T); }
   // «английский», «русская озвучка»; у тизера и ролика — с видом: «тизер, английский».
-  function langLabel(k) { return (k.type !== 'T' && TR_KIND[k.type] ? TR_KIND[k.type].toLowerCase() + ', ' : '') + (k.lang === 'ru' ? 'русская озвучка' : 'английский'); }
+  function langLabel(k, T) { return (k.type !== 'T' && TR_KIND[k.type] ? TR_KIND[k.type].toLowerCase() + ', ' : '') + audioLabel(k, T); }
   // Ключи в порядке попытки (§8.2): русский, при ошибке ролика — английский; «английский» из меню — только он.
   function trailerList(T, lang) {
     var k = trailerKeys(T), out = [];
@@ -2672,11 +2690,12 @@
   // Подписи честные: русская озвучка в YouTube почти всегда любительская (r1), субтитры — только у ролика.
   function trailerItems(T) {
     var k = trailerKeys(T), how = trailerPlayer(), out = [];
-    if (k.ru) out.push({ title: '▶ ' + trailerLabel(k.ru), subtitle: 'обычно любительская', nf_act: 'trailer', lang: 'ru' });
-    if (k.en) out.push({ title: '▶ ' + trailerLabel(k.en), nf_act: 'trailer', lang: 'en',
+    if (k.ru) out.push({ title: '▶ ' + trailerLabel(k.ru, T), subtitle: ruAudio(k.ru) ? 'обычно любительская' : 'любительский, субтитры в кадре', nf_act: 'trailer', lang: 'ru' });
+    if (k.en) out.push({ title: '▶ ' + trailerLabel(k.en, T), nf_act: 'trailer', lang: 'en',
       subtitle: how === 'bridge' ? 'рус. субтитры, если есть у ролика' : how === 'android' ? 'в приложении YouTube' : 'плеер Lampa, без субтитров' });
     if (T.tr == null && T.id) out.push({ title: '▶ Трейлер', subtitle: 'найду в TMDB: русская озвучка, иначе английский', nf_act: 'trailer', lang: '' });
     if (T.tr === '') out.push({ title: 'Трейлера нет', ghost: true, noenter: true });
+    else if (T.tr && !k.ru && !k.en) out.push({ title: 'Трейлера нет', subtitle: 'ролик недоступен на YouTube', ghost: true, noenter: true });
     return out;
   }
 
@@ -2688,27 +2707,35 @@
     var best = null, i, v;
     for (i = 0; i < (list || []).length; i++) {
       v = list[i];
-      if (!v || v.site !== 'YouTube' || v.iso_639_1 !== lang || !TR_TYPE[v.type] || !/^[A-Za-z0-9_-]{11}$/.test(v.key || '')) continue;
+      if (!v || v.site !== 'YouTube' || v.iso_639_1 !== lang || !TR_TYPE[v.type] || !/^[A-Za-z0-9_-]{11}$/.test(v.key || '') || TR_DEAD[v.key]) continue;
       if (!best || TR_RANK[v.type] < TR_RANK[best.type] || (v.type === best.type &&
         (!!v.official !== !!best.official ? !!v.official : String(v.published_at || '') > String(best.published_at || '')))) best = v;
     }
     return best;
   }
+  // Тот же поиск — и повтор после мёртвого ключа (TR_GONE): bestVideo пропускает TR_DEAD. Язык, по которому
+  // TMDB не ответил, сохраняет прежний живой токен.
   function findTrailer(T, done) {
-    var n = T.n, got = {}, left = 2, failed = 0, path;
+    var n = T.n, got = {}, bad = {}, left = 2, failed = 0, path;
     if (TR_FIND[n]) { TR_FIND[n].push(done); return; }
     TR_FIND[n] = [done];
     if (!TR_NET) TR_NET = new Lampa.Reguest();
     path = (isTv(T) ? 'tv' : 'movie') + '/' + T.id + '/videos?api_key=' + Lampa.TMDB.key() + '&language=';
     function one(lang, loc) {
       TR_NET.silent(Lampa.TMDB.api(path + loc), function (json) { got[lang] = bestVideo(json && json.results, lang); fin(); },
-        function () { failed++; fin(); }, false, { timeout: 10000 });
+        function () { bad[lang] = 1; failed++; fin(); }, false, { timeout: 10000 });
+    }
+    function token(lang) {
+      var v = got[lang], k;
+      if (v) return lang + ':' + TR_TYPE[v.type] + ':' + v.key + (TR_SUB.test(v.name || '') ? ':s' : '');
+      k = bad[lang] ? trailerKeys(T)[lang] : null;
+      return k ? lang + ':' + k.type + ':' + k.key + (k.flags ? ':' + k.flags : '') : '';
     }
     function fin() {
       var tr = [], list, i;
       if (--left) return;
-      if (got.ru) tr.push('ru:' + TR_TYPE[got.ru.type] + ':' + got.ru.key);
-      if (got.en) tr.push('en:' + TR_TYPE[got.en.type] + ':' + got.en.key);
+      if (token('ru')) tr.push(token('ru'));
+      if (token('en')) tr.push(token('en'));
       if (tr.length || !failed) T.tr = tr.join(' ');
       list = TR_FIND[n] || [];
       delete TR_FIND[n];
@@ -2718,13 +2745,38 @@
     one('en', 'en-US');
   }
   // Ключи известны — сразу; tr = null и есть TMDB id — после поиска. cb(failed) — только для последнего
-  // запроса и на той же активности: пока шёл поиск, пользователь мог уйти.
+  // запроса и там же, где его сделали: та же активность, тот же пульт, та же карточка в фокусе. Ушёл фокус
+  // или открылось меню («Действие», Select) — ответ отбрасывается: оверлей не всплывёт над чужой карточкой.
   function withTrailerKeys(T, cb) {
-    var my = ++TR_WANT, act = activeObj();
+    var my = ++TR_WANT, here = trHere();
     if (T.tr != null || !T.id) { cb(0); return; }
     if (!Lampa.TMDB || !Lampa.TMDB.api || !Lampa.TMDB.key) { cb(1); return; }
     noty('Ищу трейлер…');
-    findTrailer(T, function (failed) { if (my === TR_WANT && activeObj() === act && !TR) cb(failed); });
+    findTrailer(T, function (failed) {
+      if (my !== TR_WANT || TR || !trSame(here)) { if (my === TR_WANT) trNotyOff(); return; }
+      cb(failed);
+    });
+  }
+  // Где пульт в момент запроса: активность, контроллер, карточка и элементы в фокусе.
+  function trHere() {
+    var a = activeObj(), name = '', els = [];
+    try { name = Lampa.Controller.enabled().name; } catch (e) {}
+    try { if (a && a.activity && a.activity.render) els = a.activity.render().find('.focus').toArray(); } catch (e) {}
+    return { act: a, name: name, data: FOCUS.data, els: els };
+  }
+  function trSame(h) {
+    var n = trHere(), i;
+    if (n.act !== h.act || n.name !== h.name || n.data !== h.data || n.els.length !== h.els.length) return false;
+    for (i = 0; i < n.els.length; i++) if (n.els[i] !== h.els[i]) return false;
+    return true;
+  }
+  // «Ищу трейлер…» гаснет, когда оверлей открылся или поиск отброшен (у Noty нет hide: noty.js). Чужое — не трогаем.
+  function trNotyOff() {
+    var n;
+    try {
+      n = Lampa.Noty.render();
+      if (n && /^Ищу трейлер/.test(n.find('.noty__text').text())) n.removeClass('noty--visible');
+    } catch (e) {}
   }
 
   // Плеер (§8.6): Android с «Плеер для трейлеров = YouTube» — приложение YouTube; своя настройка
@@ -2733,10 +2785,11 @@
     try { if (Lampa.Platform.is('android') && Lampa.Storage.field('player_launch_trailers') == 'youtube') return 'android'; } catch (e) {}
     return storageGet('netflix_trailer_player', 'bridge') === 'lampa' ? 'lampa' : 'bridge';
   }
-  // items: [{keys: [{lang, type, key}] в порядке попытки, cap(k, plain) — подпись пункта}]. Приложение
-  // YouTube берёт один ролик, поэтому отсчёт на Android идёт мостом. back — куда вернуть пульт, когда
-  // вызов пришёл из закрытого Select (досье); иначе пульт вернётся туда, где он был.
-  function runTrailers(items, countdown, back) {
+  // items: [{keys: [{lang, type, key, flags}] в порядке попытки, cap(k, plain) — подпись пункта, T — тайтл,
+  // lang — что просили, card — карточка ряда у «Отсчёта»}]. Приложение YouTube берёт один ролик, поэтому
+  // отсчёт на Android идёт мостом. back — куда вернуть пульт, когда вызов пришёл из закрытого Select (досье);
+  // иначе пульт вернётся туда, где он был. show — «Отсчёт» как шоу: {W, kind, top — карточка №1 недели}.
+  function runTrailers(items, countdown, back, show) {
     var how = trailerPlayer();
     if (how === 'android' && !countdown && Lampa.Android && Lampa.Android.openYoutube) {
       if (back) back();
@@ -2744,7 +2797,7 @@
       return;
     }
     if (how === 'lampa') { if (back) back(); lampaTrailers(items); return; }
-    openOverlay(items, countdown, back);
+    openOverlay(items, countdown, back, show);
   }
   // §8.6 п. 4: плеер Lampa, у отсчёта — ещё и плейлист (как trailers.js:97-100). Звук верный: ролик выбран
   // по правилу. Русские субтитры не навязываются — мост Lampa их не передаёт.
@@ -2769,56 +2822,72 @@
         if (back) back();
         return;
       }
-      runTrailers([{ keys: keys, cap: function (k, plain) { var s = titleName(T) + ' · ' + trailerLabel(k); return plain ? s : esc(s); } }], false, back);
+      runTrailers([{ T: T, lang: lang || '', keys: keys, cap: function (k, plain) { var s = titleName(T) + ' · ' + trailerLabel(k, T); return plain ? s : esc(s); } }], false, back);
     });
   }
 
   // --- Оверлей и пульт (§8.5) ---
   // Рамка моста — с тем же allow, что у Lampa (player/youtube.js:205), и без указателя и табуляции:
   // фокус и клавиши остаются у Lampa. Lampa.Iframe не годится: там с пульта работает только «Назад».
-  function openOverlay(items, countdown, back) {
-    var list = [], from = '', el, i, j, ks, id;
+  function openOverlay(items, countdown, back, show) {
+    var from = '', el;
     closeTrailer(true);
+    trNotyOff();
     try { from = Lampa.Controller.enabled().name; } catch (e) {}
     if (!from || from === 'select' || from === 'netflix_trailer') from = 'content';
-    for (i = 0; i < items.length; i++) {
-      ks = [];
-      for (j = 0; j < items[i].keys.length; j++) ks.push(items[i].keys[j].key);
-      list.push(ks.join('~'));
-    }
-    id = 'nf' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
     el = $('<div class="nf-trailer"><iframe frameborder="0" tabindex="-1" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>' +
+      '<div class="nf-cd"></div>' +
       '<div class="nf-trailer__bar"><div class="nf-trailer__cap"></div><div class="nf-trailer__subs"></div><div class="nf-trailer__hint"></div></div></div>');
-    TR = { id: id, el: el, frame: el.find('iframe'), items: items, countdown: !!countdown, back: back || null, from: from,
-      idx: 0, key: items[0].keys[0], state: -1, played: false, ready: false, caps: '', note: 'Загрузка…' };
-    el.find('.nf-trailer__hint').text('OK — пауза · ←/→ — 10 с' + (countdown ? ' · ↓ — следующий' : '') + ' · Назад — выход');
-    el.on('click', function () { trCmd('toggle'); });   // мышь и касание: рамка без указателя, щелчок приходит сюда
+    TR = { id: '', el: el, frame: el.find('iframe'), items: items, countdown: !!countdown, show: (countdown && show) || null, back: back || null, from: from,
+      idx: 0, key: items[0].keys[0], state: -1, played: false, ready: false, caps: '', note: 'Загрузка…', warn: '', pend: '', ad: false, card: false, cardIdx: -1, fin: false };
+    el.find('.nf-trailer__hint').text('OK — пауза · ←/→ — 10 с' + (countdown ? ' · ↓ — следующий · ↑ — предыдущий' : '') + ' · Назад — выход');
+    el.on('click', function () { trEnter(); });   // мышь и касание: рамка без указателя, щелчок приходит сюда
     window.addEventListener('message', trMessage, false);
     $('body').append(el);
-    TR.frame.attr('src', BRIDGE_URL + '?id=' + id + '&list=' + encodeURIComponent(list.join(',')) + '&i=0');
+    trLoad(TR);
     trController();
     Lampa.Controller.toggle('netflix_trailer');
-    TR.wait = setTimeout(trNoBridge, TR_WAIT);
     // Скринсейвер Lampa не знает про оверлей: пока ролик идёт, сбрасываем его таймер, как плеер Lampa.
     TR.saver = setInterval(function () { try { if (TR && TR.state === 1) Lampa.Screensaver.resetTimer(); } catch (e) {} }, 30000);
     trDraw();
     trWake(true);
   }
-  // Пульт: OK — пауза, ←/→ — 10 с, ↓/↑ — следующий и предыдущий в отсчёте, «Назад» — выход. Медиаклавиши
-  // Lampa шлёт активному контроллеру (keypad.js:138-168). Долгое OK — пусто: иначе оно откроет меню
-  // карточки под оверлеем (controller.js:114-117).
+  // Мост по пунктам S.items. Новый id: опоздавшие сообщения прежнего моста не в счёт. nocc — ключи с русским
+  // звуком (им мост не навязывает субтитры), hold — «Отсчёт»: пункт ждёт конца своей карточки.
+  function trLoad(S) {
+    var list = [], ru = [], i, j, ks;
+    for (i = 0; i < S.items.length; i++) {
+      ks = [];
+      for (j = 0; j < S.items[i].keys.length; j++) {
+        ks.push(S.items[i].keys[j].key);
+        if (S.items[i].keys[j].lang === 'ru') ru.push(S.items[i].keys[j].key);
+      }
+      list.push(ks.join('~'));
+    }
+    try { if (S.id) S.frame[0].contentWindow.postMessage({ nf: S.id, cmd: 'destroy' }, '*'); } catch (e) {}
+    clearTimeout(S.wait); clearTimeout(S.nudge); clearTimeout(S.cardT);
+    S.id = 'nf' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    S.ready = false; S.idx = 0; S.key = S.items[0].keys[0]; S.state = -1; S.caps = ''; S.ad = false; S.cardIdx = -1;
+    S.frame.attr('src', BRIDGE_URL + '?id=' + S.id + '&list=' + encodeURIComponent(list.join(',')) + '&i=0' +
+      (ru.length ? '&nocc=' + encodeURIComponent(ru.join(',')) : '') + (S.show ? '&hold=1' : ''));
+    S.wait = setTimeout(trNoBridge, TR_WAIT);
+  }
+  // Пульт: OK — пауза, ←/→ — 10 с, ↓/↑ — следующий и предыдущий в отсчёте, «Назад» — выход. Во время рекламы
+  // YouTube на русском ролике ↓ — английский ключ того же пункта. Медиаклавиши Lampa шлёт активному
+  // контроллеру (keypad.js:138-168). Долгое OK — пусто: иначе оно откроет меню карточки под оверлеем
+  // (controller.js:114-117).
   function trController() {
     Lampa.Controller.add('netflix_trailer', {
       toggle: function () {},
       update: function () {},
-      enter: function () { trCmd('toggle'); },
+      enter: function () { trEnter(); },
       long: function () {},
       left: function () { trCmd('seek', -10); },
       right: function () { trCmd('seek', 10); },
-      up: function () { if (TR && TR.countdown) trCmd('prev'); else trWake(true); },
-      down: function () { if (TR && TR.countdown) trCmd('next'); else trWake(true); },
-      playpause: function () { trCmd('toggle'); },
-      play: function () { trCmd('play'); },
+      up: function () { trStep(-1); },
+      down: function () { trStep(1); },
+      playpause: function () { trEnter(); },
+      play: function () { if (TR && TR.fin) trEnter(); else if (!trCardOff(true)) trCmd('play'); },
       pause: function () { trCmd('pause'); },
       rewindBack: function () { trCmd('seek', -10); },
       rewindForward: function () { trCmd('seek', 10); },
@@ -2828,13 +2897,49 @@
       gone: function (name) { if (TR && name !== 'netflix_trailer') closeTrailer(true); }
     });
   }
+  // Команда мосту. Карточка «Отсчёта» и финал ролика не показывают: перемотка и пауза там ни к чему.
   function trCmd(cmd, by) {
-    var S = TR, w;
+    var S = TR;
     if (!S) return;
-    try { w = S.frame[0].contentWindow; if (w) w.postMessage(by ? { nf: S.id, cmd: cmd, by: by } : { nf: S.id, cmd: cmd }, '*'); } catch (e) {}
+    if (!(S.fin || (S.card && (cmd === 'seek' || cmd === 'pause' || cmd === 'toggle')))) trSend(S, cmd, by);
     trWake(true);
   }
-  // Сообщения моста (§8.4): {nf, ev: bridge | ready | item | state | captions | error | end}.
+  function trSend(S, cmd, by) {
+    var w;
+    try { w = S.frame[0].contentWindow; if (w) w.postMessage(by ? { nf: S.id, cmd: cmd, by: by } : { nf: S.id, cmd: cmd }, '*'); } catch (e) {}
+  }
+  // OK: на карточке места — сразу ролик, на финальной — страница тайтла №1; иначе пауза и продолжение.
+  function trEnter() {
+    var S = TR;
+    if (!S) return;
+    if (S.fin) { trOpenTop(S); return; }
+    if (trCardOff(true)) return;
+    trCmd('toggle');
+  }
+  // ↓ (d = 1) и ↑ (−1). Реклама на ролике с запасным английским — ↓ переключает на него без ошибки.
+  function trStep(d) {
+    var S = TR;
+    if (!S || S.fin) return;
+    if (d > 0 && S.ad && trAlt(S)) { S.pend = ''; trSend(S, 'alt'); trWake(true); return; }
+    if (!S.countdown) { trWake(true); return; }
+    clearTimeout(S.cardT); S.cardT = null;   // карточка остаётся до карточки соседнего пункта
+    trSend(S, d > 0 ? 'next' : 'prev');
+    trWake(true);
+  }
+  // Английский ключ того же пункта после играющего (у русского ролика), иначе null.
+  function trAlt(S) {
+    var ks = (S.items[S.idx] || {}).keys || [], i;
+    for (i = 0; i < ks.length - 1; i++) if (ks[i].key === S.key.key) return ks[i + 1].lang === 'en' ? ks[i + 1] : null;
+    return null;
+  }
+  // Подсказка «нажмите OK», если ролик так и не пошёл сам; реклама и карточка — не тот случай.
+  function trExpect(S) {
+    clearTimeout(S.nudge);
+    S.nudge = setTimeout(function () {
+      if (TR === S && !S.played && !S.ad && !S.card && !S.fin && S.state !== 3) { S.note = 'Не запустился сам — нажмите OK'; trDraw(); trWake(true); }
+    }, TR_NUDGE);
+  }
+  // Сообщения моста (§8.4): {nf, ev: bridge | ready | item | state | captions | ad | error | end}.
   function trMessage(e) {
     var S = TR, d = e && e.data;
     if (!S || !d || typeof d !== 'object' || d.nf !== S.id) return;
@@ -2845,46 +2950,104 @@
     } else if (d.ev === 'ready') {
       S.ready = true;
       clearTimeout(S.wait);
-      S.nudge = setTimeout(function () {
-        if (TR === S && !S.played && S.state !== 3) { S.note = 'Не запустился сам — нажмите OK'; trDraw(); trWake(true); }
-      }, TR_NUDGE);
+      if (!S.show) trExpect(S);
     } else if (d.ev === 'item') {
       S.idx = d.i >= 0 && d.i < S.items.length ? d.i : 0;
       S.key = keyOf(S.items[S.idx], d.key);
-      S.caps = ''; S.state = -1; S.note = 'Загрузка…';
+      S.caps = ''; S.state = -1; S.ad = false; S.note = 'Загрузка…';
+      S.warn = S.pend; S.pend = '';
+      // «Отсчёт»: новый пункт — карточка места; запасной ключ того же пункта играет сразу (или после карточки).
+      if (S.show && S.cardIdx !== S.idx) trCard(S);
+      else if (S.show && !S.cardT) { trSend(S, 'play'); trExpect(S); }
       trDraw();
       trWake(true);
     } else if (d.ev === 'state') {
       S.state = d.s;
-      if (d.s === 1) { S.played = true; S.note = ''; clearTimeout(S.nudge); }
+      if (d.s === 1) { S.played = true; S.note = ''; S.ad = false; clearTimeout(S.nudge); }
       trDraw();
       // Пауза показывает подписи; игра прячет их через 5 с, если они видны. Буфер их не трогает.
       if (d.s === 2) trWake(true);
       else if (d.s === 1) trWake(false);
+    } else if (d.ev === 'ad') {
+      // Реклама YouTube: клавиши YouTube не слушает 15–50 с. Подсказки «нажмите OK» нет, субтитры рекламы не в счёт.
+      S.ad = !!d.on;
+      if (S.ad) { S.caps = ''; clearTimeout(S.nudge); if (/^Не запустился/.test(S.note)) S.note = 'Загрузка…'; }
+      trDraw();
+      trWake(true);
     } else if (d.ev === 'captions') {
+      if (S.ad || S.key.lang === 'ru') return;   // русский звук: строки о субтитрах нет (§8.5)
       S.caps = CAP_TEXT[d.mode] ? d.mode : 'unknown';
       trDraw();
-    } else if (d.ev === 'error' && d.fatal) {
-      // Одиночный трейлер не заиграл ни одним ключом — плеер Lampa (§8.6 п. 3); в отсчёте мост идёт дальше сам.
-      if (!S.countdown && !S.played) trFallback('Ролик не играет во встроенном плеере — открываю плеер Lampa');
-      else { S.note = 'Ролик недоступен' + (S.idx < S.items.length - 1 ? ' — дальше следующий' : ''); trDraw(); trWake(true); }
-    } else if (d.ev === 'end') closeTrailer();
+    } else if (d.ev === 'error') trError(S, d);
+    else if (d.ev === 'end') { if (S.show) trFinal(S); else closeTrailer(); }
+  }
+  // Ошибка ролика. Мёртвый ключ (TR_GONE) запоминается, тайтл один раз ищет в TMDB замену (для следующего раза).
+  // Русский не сыграл — мост берёт английский, оверлей так и говорит. Одиночный трейлер без живого ключа —
+  // повтор поиска без мёртвых ключей; не нашлось — «Ролик недоступен на YouTube». Плеер Lampa для этого
+  // бесполезен: он играет тот же ключ (§8.6 п. 3 — только когда мост не ответил).
+  function trError(S, d) {
+    var it = S.items[d.i >= 0 && d.i < S.items.length ? d.i : S.idx], k = keyOf(it, d.key), gone = !!TR_GONE[d.code];
+    if (gone && d.key) TR_DEAD[d.key] = 1;
+    if (!d.fatal) {
+      if (k.lang === 'ru') S.pend = 'Русская озвучка недоступна — английский';
+      if (gone) trRefind(it);
+      return;
+    }
+    if (!S.countdown && !S.played) { trRetry(S, it, d.code); return; }
+    if (gone) trRefind(it);
+    clearTimeout(S.cardT); S.cardT = null;
+    S.note = 'Ролик недоступен на YouTube' + (S.countdown ? ' — пропускаю' : '');
+    if (S.card) S.el.find('.nf-cd__note').text(S.note);
+    trDraw();
+    trWake(true);
+  }
+  // Повторный поиск тайтла в TMDB без мёртвых ключей — один раз за сессию. done(ran): ran — поиск был.
+  function trRefind(it, done) {
+    var T = it && it.T;
+    if (!T || !T.id || !Lampa.TMDB || !Lampa.TMDB.api || !Lampa.TMDB.key || (T.trRe && !TR_FIND[T.n])) { if (done) done(false); return; }
+    T.trRe = 1;
+    findTrailer(T, function () { if (done) done(true); });
+  }
+  function trRetry(S, it, code) {
+    if (!TR_GONE[code]) { trGone(code); return; }
+    S.note = 'Ролик недоступен — ищу другой…';
+    trDraw();
+    trWake(true);
+    trRefind(it, function (ran) {
+      var keys;
+      if (TR !== S) return;
+      keys = ran ? trailerList(it.T, it.lang) : [];
+      if (!keys.length) { trGone(code); return; }
+      it.keys = keys;
+      S.note = 'Загрузка…';
+      trLoad(S);
+      trDraw();
+    });
+  }
+  function trGone(code) {
+    closeTrailer();
+    noty(TR_GONE[code] ? 'Ролик недоступен на YouTube' : 'Ролик не играет во встроенном плеере');
   }
   function keyOf(it, key) {
     var ks = (it && it.keys) || [], i;
     for (i = 0; i < ks.length; i++) if (ks[i].key === key) return ks[i];
-    return ks[0] || { lang: 'en', type: 'T', key: key };
+    return ks[0] || { lang: 'en', type: 'T', key: key, flags: '' };
   }
-  // Подписи (§8.5): строка пункта — по ключу, который играет сейчас; вторая — состояние или субтитры.
+  // Подписи (§8.5): строка пункта — по ключу, который играет сейчас; вторая — реклама, замена ролика,
+  // состояние и субтитры (у русского звука строки о субтитрах нет).
   function trDraw() {
-    var S = TR, it, line;
+    var S = TR, it, line = [];
     if (!S) return;
     it = S.items[S.idx] || S.items[0];
     S.el.find('.nf-trailer__cap').html(it.cap(S.key, false));
-    if (S.note) line = S.note;
-    else if (S.state === 2) line = 'Пауза' + (S.caps ? ' · ' + CAP_TEXT[S.caps] : '');
-    else line = S.caps ? CAP_TEXT[S.caps] : '';
-    S.el.find('.nf-trailer__subs').text(line);
+    if (S.ad) line.push('Реклама YouTube' + (trAlt(S) ? ' · ↓ — английский без рекламы' : S.countdown ? ' · ↓ — следующий' : ''));
+    else {
+      if (S.warn) line.push(S.warn);
+      if (S.note) line.push(S.note);
+      else if (S.state === 2) line.push('Пауза');
+      if (S.caps && !S.note && S.key.lang !== 'ru') line.push(CAP_TEXT[S.caps]);
+    }
+    S.el.find('.nf-trailer__subs').text(line.join(' · '));
   }
   // Подписи видны при открытии, смене пункта, паузе и любой клавише (show) и прячутся через 5 с игры.
   // Без show спрятанные подписи остаются спрятанными, у видимых заново идёт отсчёт.
@@ -2894,8 +3057,75 @@
     if (show) S.el.removeClass('nf-trailer--idle');
     else if (S.el.hasClass('nf-trailer--idle')) return;
     clearTimeout(S.idle);
-    if (S.state === 1 && !S.note) S.idle = setTimeout(function () { if (TR === S) S.el.addClass('nf-trailer--idle'); }, TR_IDLE);
+    if (S.state === 1 && !S.note && !S.ad) S.idle = setTimeout(function () { if (TR === S) S.el.addClass('nf-trailer--idle'); }, TR_IDLE);
   }
+
+  // --- «Отсчёт» как шоу (§8.7) ---
+  // Перед роликом пункта — карточка места на 2,5 с поверх моста, который ждёт (hold): крупный номер, постер,
+  // движение, просмотры и неделя, «3 из 8». OK — сразу ролик.
+  function trCard(S) {
+    var it = S.items[S.idx];
+    S.cardIdx = S.idx;
+    clearTimeout(S.cardT); S.cardT = null;
+    if (!it || !it.card) { S.card = false; trSend(S, 'play'); trExpect(S); return; }
+    trCardShow(S, cdHtml(it.card, (S.idx + 1) + ' из ' + S.items.length, false));
+    S.cardT = setTimeout(function () { if (TR === S) trCardOff(true); }, TR_CARD);
+  }
+  function trCardShow(S, html) {
+    var cd = S.el.find('.nf-cd');
+    S.card = true;
+    S.el.addClass('nf-trailer--card');
+    cd.removeClass('nf-cd--go').html(html).addClass('nf-cd--on');
+    cd.find('img').on('load', function () { $(this).addClass('nf-cd__img--on'); });
+    setTimeout(function () { if (TR === S) cd.addClass('nf-cd--go'); }, 40);   // полоска 2,5 с — после отрисовки
+  }
+  // Убрать карточку места; play — пустить ролик. Возвращает, была ли карточка.
+  function trCardOff(play) {
+    var S = TR;
+    if (!S || !S.card || S.fin) return false;
+    clearTimeout(S.cardT); S.cardT = null;
+    S.card = false;
+    S.el.removeClass('nf-trailer--card');
+    S.el.find('.nf-cd').removeClass('nf-cd--on nf-cd--go');
+    if (play) { trSend(S, 'play'); trExpect(S); }
+    trDraw();
+    trWake(true);
+    return true;
+  }
+  // Финал: «№1 недели — X», OK открывает тайтл, «Назад» — выход; через 30 с оверлей закрывается сам.
+  function trFinal(S) {
+    var top = S.show && S.show.top;
+    if (!top || !top.nf || !D.T[top.nf.n]) { closeTrailer(); return; }
+    clearTimeout(S.cardT); clearTimeout(S.nudge); clearTimeout(S.idle); S.cardT = null;
+    trCardShow(S, cdHtml(top, '', true));
+    S.fin = true;
+    S.finT = setTimeout(function () { if (TR === S) closeTrailer(); }, TR_FINAL);
+  }
+  function trOpenTop(S) {
+    var top = S.show.top;
+    closeTrailer();
+    openTitle(top);
+  }
+  // Разметка карточки: номер, постер w300, название, сезон и движение, просмотры и неделя, счёт или подсказка.
+  function cdHtml(card, count, fin) {
+    var nf = card.nf, T = D.T[nf.n], img = T && T.p && Lampa.Api && Lampa.Api.img ? Lampa.Api.img(T.p, 'w300') : '';
+    var lab = seasonLong(slabel(nf.sid)), mv = moveText(nf.mv, false), meta = [], stat = [];
+    if (lab) meta.push(esc(lab));
+    if (mv) meta.push(mv);
+    if (nf.wk != null && nf.wk >= vf() && nf.v) stat.push(viewsLabel(nf.v)); else if (nf.h) stat.push(hoursLabel(nf.h));
+    if (nf.cw) stat.push(nf.cw === 1 ? 'первая неделя в топе' : nf.cw + '-я нед. в топе');
+    return '<div class="nf-cd__rank' + (nf.rank === 1 ? ' nf-cd__rank--1' : '') + '">' + esc(nf.rank) + '</div>' +
+      '<div class="nf-cd__poster">' + (img ? '<img class="nf-cd__img" src="' + esc(img) + '" alt="" />' : '') + '<div class="nf-cd__ph">' + esc(titleName(T)) + '</div></div>' +
+      '<div class="nf-cd__body">' +
+        (fin ? '<div class="nf-cd__kicker">Финал отсчёта' + (nf.wk != null ? ' · ' + esc(weekLabel(nf.wk, { short: true })) : '') + '</div>' : '') +
+        '<div class="nf-cd__title">' + (fin ? '№1 недели — ' : '') + esc(titleName(T)) + '</div>' +
+        (meta.length ? '<div class="nf-cd__meta">' + meta.join(' · ') + '</div>' : '') +
+        (stat.length ? '<div class="nf-cd__stat">' + esc(stat.join(' · ')) + '</div>' : '') +
+        '<div class="nf-cd__note"></div>' +
+        (fin ? '<div class="nf-cd__count">OK — открыть · Назад — выход</div>' : '<div class="nf-cd__count">' + esc(count) + '</div><div class="nf-cd__bar"><i></i></div>') +
+      '</div>';
+  }
+
   // §8.6 п. 3: мост не прислал ready — оверлей закрывается, играет плеер Lampa.
   function trNoBridge() { if (TR && !TR.ready) trFallback('Мост трейлеров не ответил — открываю плеер Lampa'); }
   function trFallback(text) {
@@ -2911,7 +3141,7 @@
     var S = TR;
     if (!S) return;
     TR = null;
-    clearTimeout(S.wait); clearTimeout(S.nudge); clearTimeout(S.idle); clearInterval(S.saver);
+    clearTimeout(S.wait); clearTimeout(S.nudge); clearTimeout(S.idle); clearTimeout(S.cardT); clearTimeout(S.finT); clearInterval(S.saver);
     try { S.frame[0].contentWindow.postMessage({ nf: S.id, cmd: 'destroy' }, '*'); } catch (e) {}
     window.removeEventListener('message', trMessage, false);
     try { S.frame.attr('src', 'about:blank'); } catch (e) {}
@@ -2921,29 +3151,36 @@
     else Lampa.Controller.toggle(S.from);
   }
 
-  // --- Кнопка ▶ на пульте (§8.3 п. 1) ---
+  // --- Клавиши пульта на экранах плагина (§8.3 п. 1) ---
   // Lampa шлёт keydown до своей обработки и потом смотрит defaultPrevented (keypad.js:70-73). Только на
   // экранах плагина, когда пульт в рядах или сетке, а оверлей закрыт. Карточка в фокусе отдаёт card_data
-  // (card.js:49); плитка «Отсчёт» — nf_tile. Коды пультов владельца не проверены.
-  var PLAY_KEYS = { 415: 1, 71: 1, 179: 1, 10252: 1 };
+  // (card.js:49); плитка «Отсчёт» — nf_tile. ▶: 415, 179, 10252, Space 32 (в Lampa — playpause) и 250;
+  // 71 — только на Orsay (keypad.js:155), на ПК это буква G. «Инфо» 457 — досье карточки в фокусе.
+  var PLAY_KEYS = { 415: 1, 179: 1, 10252: 1, 32: 1, 250: 1 };
+  var INFO_KEY = 457;
   function registerPlayKey() {
     var g = ['VK_PLAY', 'VK_PLAY_PAUSE', 'KEYCODE_MEDIA_PLAY', 'KEYCODE_MEDIA_PLAY_PAUSE'], i;
     if (!Lampa.Keypad || !Lampa.Keypad.listener || !Lampa.Keypad.listener.follow) return;
     for (i = 0; i < g.length; i++) if (typeof window[g[i]] === 'number') PLAY_KEYS[window[g[i]]] = 1;   // Philips, как keypad.js:6-11
+    try { if (Lampa.Platform.is('orsay')) PLAY_KEYS[71] = 1; } catch (e) {}
     Lampa.Keypad.listener.follow('keydown', function (e) {
       // Нажатие уже забрал другой слушатель (например, оно будило скринсейвер) — не наше.
-      if (!e || !PLAY_KEYS[e.code] || TR || !e.event || e.event.defaultPrevented || e.enabled === false) return;
+      if (!e || !(PLAY_KEYS[e.code] || e.code === INFO_KEY) || TR || !e.event || e.event.defaultPrevented || e.enabled === false) return;
       // Исключение здесь оборвало бы чужих слушателей клавиш (Subscribe.send идёт одним циклом).
-      try { playKey(e.event); } catch (x) { log('play key', x && x.message); }
+      try { if (e.code === INFO_KEY) infoKey(e.event); else playKey(e.event); } catch (x) { log('play key', x && x.message); }
     });
   }
-  function playKey(ev) {
-    var a = activeObj(), name = '', el, d, T;
-    if (!a || !/^netflix/.test(a.component || '') || !a.activity || !a.activity.render) return;
+  // Карточка или плитка в фокусе на экране плагина, когда пульт в рядах или сетке; иначе null.
+  function keyTarget() {
+    var a = activeObj(), name = '', el;
+    if (!a || !/^netflix/.test(a.component || '') || !a.activity || !a.activity.render) return null;
     try { name = Lampa.Controller.enabled().name; } catch (x) {}
-    if (name !== 'items_line' && name !== 'content') return;   // меню, шапка, Select — не наш случай
+    if (name !== 'items_line' && name !== 'content') return null;   // меню, шапка, Select — не наш случай
     el = a.activity.render().find('.card.focus, .nf-tile.focus')[0];
-    d = el ? el.nf_tile || el.card_data : FOCUS.act === a ? FOCUS.data : null;
+    return el ? el.nf_tile || el.card_data : FOCUS.act === a ? FOCUS.data : null;
+  }
+  function playKey(ev) {
+    var d = keyTarget(), T;
     if (!d) return;
     if (d.tile) {
       if (d.act !== 'countdown') return;
@@ -2955,6 +3192,12 @@
     if (!T) return;
     ev.preventDefault();
     playTrailer(T, '');
+  }
+  function infoKey(ev) {
+    var d = keyTarget(), T = d && !d.tile && d.nf ? D.T[d.nf.n] : null;
+    if (!T) return;
+    ev.preventDefault();
+    showDossier(T);
   }
   // Настройка «Плеер трейлеров» (§8.6) в своём разделе настроек Lampa.
   function registerSettings() {
@@ -2981,14 +3224,14 @@
     for (i = cards.length - 1; i >= 0; i--) if (own[i]) items.push(countdownItem(cards[i], own[i]));
     return items;
   }
-  // «№7 · Black Doves · Сезон 2 · НОВОЕ · английский»; язык — по ключу, который играет.
+  // «№7 · Black Doves · Сезон 2 · НОВОЕ · английский»; язык — по ключу, который играет. card — для карточки места.
   function countdownItem(card, keys) {
     var nf = card.nf, T = D.T[nf.n];
-    return { keys: keys, cap: function (k, plain) {
+    return { T: T, lang: '', card: card, keys: keys, cap: function (k, plain) {
       var e = plain ? String : esc, out = ['№' + nf.rank, e(titleName(T))], lab = seasonLong(slabel(nf.sid)), mv = moveText(nf.mv, plain);
       if (lab) out.push(e(lab));
       if (mv) out.push(mv);
-      out.push(e(langLabel(k)));
+      out.push(e(langLabel(k, T)));
       return out.join(' · ');
     } };
   }
@@ -3014,15 +3257,17 @@
     n += maybe;
     return n ? (maybe ? 'до ' : '') + n + ' ' + plural(n, 'трейлер', 'трейлера', 'трейлеров') : '';
   }
-  // Позиции те же, что в ряду (worldTop недели W). Ролики с tr = null ищутся в TMDB все сразу.
+  // Позиции те же, что в ряду (worldTop недели W). Ролики с tr = null ищутся в TMDB все сразу; ответ
+  // отбрасывается, если пульт ушёл с плитки (как withTrailerKeys). Финал шоу — карточка №1 недели.
   function countdown(W, kind) {
-    var cards = worldTop(W, kind), need = [], my = ++TR_WANT, act = activeObj(), left, i, T;
+    var cards = worldTop(W, kind), need = [], my = ++TR_WANT, here = trHere(), left, i, T;
     function go() {
       var items;
-      if (my !== TR_WANT || activeObj() !== act || TR) return;
+      if (my !== TR_WANT || TR || !trSame(here)) { if (my === TR_WANT) trNotyOff(); return; }
       items = countdownPlan(cards);
       if (!items.length) { noty('У этого топа нет трейлеров'); return; }
-      runTrailers(items, true);
+      // Финал — №1 недели, даже если у него нет ролика; нет №1 в данных — оверлей просто закроется.
+      runTrailers(items, true, null, { W: W, kind: kind, top: cards[0] && cards[0].nf && cards[0].nf.rank === 1 ? cards[0] : null });
     }
     for (i = 0; i < cards.length; i++) {
       T = D.T[cards[i].nf.n];
@@ -3308,18 +3553,41 @@
     '.nf-meta--new{color:#ffd400}' +
     '.nf-meta--back{color:#6cc8ff}' +
     // Оверлей трейлера (§8.5): выше шапки, меню и Select (55), ниже Noty (99). Подписи сверху: снизу —
-    // субтитры YouTube.
+    // субтитры YouTube. Полоса подписей непрозрачная: под ней прячется строка названия и аватар канала,
+    // которые YouTube сам показывает в начале ролика и на паузе.
     '.nf-trailer{position:fixed;left:0;top:0;right:0;bottom:0;z-index:70;background:#000;overflow:hidden}' +
     '.nf-trailer iframe{position:absolute;left:0;top:0;width:100%;height:100%;border:0;pointer-events:none}' +
-    '.nf-trailer__bar{position:absolute;left:0;right:0;top:0;padding:1.6em 2.4em 4em;color:#fff;background:linear-gradient(to bottom,rgba(0,0,0,.85),rgba(0,0,0,0));pointer-events:none;transition:opacity .4s}' +
-    '.nf-trailer--idle .nf-trailer__bar{opacity:0}' +
+    '.nf-trailer__bar{position:absolute;left:0;right:0;top:0;min-height:5.5em;padding:1.6em 2.4em 1.2em;color:#fff;background:#000;pointer-events:none;transition:opacity .4s}' +
+    '.nf-trailer__bar:after{content:"";position:absolute;left:0;right:0;top:100%;height:2.5em;background:linear-gradient(to bottom,#000,rgba(0,0,0,0))}' +
+    '.nf-trailer--idle .nf-trailer__bar,.nf-trailer--card .nf-trailer__bar{opacity:0}' +
     '.nf-trailer__cap{font-size:1.6em;font-weight:700;line-height:1.3;text-shadow:0 0 .3em rgba(0,0,0,.8)}' +
     '.nf-trailer__subs{font-size:1.1em;line-height:1.3;min-height:1.3em;margin-top:.35em;opacity:.85}' +
     '.nf-trailer__hint{font-size:.95em;margin-top:.6em;opacity:.55}' +
     '.nf-mv i{display:inline-block;width:0;height:0;margin-right:.25em;vertical-align:.1em;border-left:.35em solid transparent;border-right:.35em solid transparent}' +
     '.nf-mv--up{color:#5ee37b}.nf-mv--up i{border-bottom:.5em solid #5ee37b}' +
     '.nf-mv--down{color:#ff6b6b}.nf-mv--down i{border-top:.5em solid #ff6b6b}' +
-    '.nf-mv--new{color:#ffd400}.nf-mv--back{color:#6cc8ff}';
+    '.nf-mv--new{color:#ffd400}.nf-mv--back{color:#6cc8ff}' +
+    // Карточка места «Отсчёта» и финал «№1 недели» (§8.7): поверх моста, который ждёт.
+    '.nf-cd{position:absolute;left:0;top:0;right:0;bottom:0;display:none;align-items:center;justify-content:center;padding:0 6em;background:#000;color:#fff}' +
+    '.nf-cd--on{display:flex}' +
+    '.nf-cd__rank{position:relative;z-index:1;flex-shrink:0;margin-right:-.12em;font-size:16em;line-height:.8;font-weight:900;letter-spacing:-.07em;color:#141414;-webkit-text-stroke:.02em #cfcfcf}' +
+    '.nf-cd__rank--1{color:#d9a520;-webkit-text-stroke:.02em #fff3c4}' +
+    '.nf-cd__poster{position:relative;z-index:2;flex-shrink:0;width:14em;height:21em;border-radius:.8em;overflow:hidden;background:#1c1c1e;box-shadow:0 1em 3em rgba(0,0,0,.7)}' +
+    '.nf-cd__img{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .3s}' +
+    '.nf-cd__img--on{opacity:1}' +
+    '.nf-cd__ph{position:absolute;left:1em;right:1em;bottom:1em;font-size:1.3em;font-weight:700;line-height:1.2}' +
+    '.nf-cd__img--on+.nf-cd__ph{display:none}' +
+    '.nf-cd__body{margin-left:3em;max-width:36em}' +
+    '.nf-cd__kicker{font-size:1.2em;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#e50914}' +
+    '.nf-cd__title{font-size:3em;font-weight:800;line-height:1.1;margin-top:.15em}' +
+    '.nf-cd__meta{font-size:1.5em;font-weight:700;margin-top:.7em}' +
+    '.nf-cd__stat{font-size:1.4em;margin-top:.45em;opacity:.75}' +
+    '.nf-cd__note{font-size:1.2em;margin-top:.6em;color:#ff6b6b}' +
+    '.nf-cd__note:empty{display:none}' +
+    '.nf-cd__count{font-size:1.2em;margin-top:1.6em;opacity:.55}' +
+    '.nf-cd__bar{width:14em;height:.3em;margin-top:.7em;border-radius:.3em;overflow:hidden;background:rgba(255,255,255,.18)}' +
+    '.nf-cd__bar i{display:block;width:0;height:100%;background:#e50914}' +
+    '.nf-cd--go .nf-cd__bar i{width:100%;transition:width 2.5s linear}';
   function injectStyle() {
     var s;
     if (typeof document === 'undefined' || !document.head || document.getElementById('netflix-style')) return;
