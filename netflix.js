@@ -4887,7 +4887,7 @@
     // которые YouTube сам показывает в начале ролика и на паузе.
     '.nf-trailer{position:fixed;left:0;top:0;right:0;bottom:0;z-index:70;background:#000;overflow:hidden}' +
     '.nf-trailer iframe{position:absolute;left:0;top:0;width:100%;height:100%;border:0;pointer-events:none}' +
-    '.nf-trailer__bar{position:absolute;left:0;right:0;top:0;min-height:5.5em;padding:1.6em 2.4em 1.2em;color:#fff;background:#000;pointer-events:none;transition:opacity .4s}' +
+    '.nf-trailer__bar{position:absolute;left:0;right:0;top:0;min-height:5.5em;padding:1.6em 2.4em 1.2em;color:#fff;background:#000;pointer-events:none;-webkit-transition:opacity .4s;transition:opacity .4s}' +
     '.nf-trailer__bar:after{content:"";position:absolute;left:0;right:0;top:100%;height:2.5em;background:linear-gradient(to bottom,#000,rgba(0,0,0,0))}' +
     '.nf-trailer--idle .nf-trailer__bar,.nf-trailer--card .nf-trailer__bar{opacity:0}' +
     '.nf-trailer__cap{font-size:1.6em;font-weight:700;line-height:1.3;text-shadow:0 0 .3em rgba(0,0,0,.8)}' +
@@ -4898,12 +4898,13 @@
     '.nf-mv--down{color:#ff6b6b}.nf-mv--down i{border-top:.5em solid #ff6b6b}' +
     '.nf-mv--new{color:#ffd400}.nf-mv--back{color:#6cc8ff}' +
     // Карточка места «Отсчёта» и финал «№1 недели» (§8.7): поверх моста, который ждёт.
-    '.nf-cd{position:absolute;left:0;top:0;right:0;bottom:0;display:none;align-items:center;justify-content:center;padding:0 6em;background:#000;color:#fff}' +
-    '.nf-cd--on{display:flex}' +
-    '.nf-cd__rank{position:relative;z-index:1;flex-shrink:0;margin-right:-.12em;font-size:16em;line-height:.8;font-weight:900;letter-spacing:-.07em;color:#141414;-webkit-text-stroke:.02em #cfcfcf}' +
+    '.nf-cd{position:absolute;left:0;top:0;right:0;bottom:0;display:none;-webkit-box-align:center;-webkit-align-items:center;align-items:center;-webkit-box-pack:center;-webkit-justify-content:center;justify-content:center;padding:0 6em;background:#000;color:#fff}' +
+    // Карточка «Отсчёта» на старом WebKit ТВ (Tizen 2.x, webOS 1–2): флекс только с -webkit- (tv-compat-r1-1).
+    '.nf-cd--on{display:-webkit-box;display:-webkit-flex;display:flex}' +
+    '.nf-cd__rank{position:relative;z-index:1;-webkit-flex-shrink:0;flex-shrink:0;margin-right:-.12em;font-size:16em;line-height:.8;font-weight:900;letter-spacing:-.07em;color:#141414;-webkit-text-stroke:.02em #cfcfcf}' +
     '.nf-cd__rank--1{color:#d9a520;-webkit-text-stroke:.02em #fff3c4}' +
-    '.nf-cd__poster{position:relative;z-index:2;flex-shrink:0;width:14em;height:21em;border-radius:.8em;overflow:hidden;background:#1c1c1e;box-shadow:0 1em 3em rgba(0,0,0,.7)}' +
-    '.nf-cd__img{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .3s}' +
+    '.nf-cd__poster{position:relative;z-index:2;-webkit-flex-shrink:0;flex-shrink:0;width:14em;height:21em;border-radius:.8em;overflow:hidden;background:#1c1c1e;box-shadow:0 1em 3em rgba(0,0,0,.7)}' +
+    '.nf-cd__img{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:cover;opacity:0;-webkit-transition:opacity .3s;transition:opacity .3s}' +
     '.nf-cd__img--on{opacity:1}' +
     '.nf-cd__ph{position:absolute;left:1em;right:1em;bottom:1em;font-size:1.3em;font-weight:700;line-height:1.2}' +
     '.nf-cd__img--on+.nf-cd__ph{display:none}' +
@@ -4917,7 +4918,7 @@
     '.nf-cd__count{font-size:1.2em;margin-top:1.6em;opacity:.55}' +
     '.nf-cd__bar{width:14em;height:.3em;margin-top:.7em;border-radius:.3em;overflow:hidden;background:rgba(255,255,255,.18)}' +
     '.nf-cd__bar i{display:block;width:0;height:100%;background:#e50914}' +
-    '.nf-cd--go .nf-cd__bar i{width:100%;transition:width 2.5s linear}';
+    '.nf-cd--go .nf-cd__bar i{width:100%;-webkit-transition:width 2.5s linear;transition:width 2.5s linear}';
   function injectStyle() {
     var s;
     if (typeof document === 'undefined' || !document.head || document.getElementById('netflix-style')) return;
