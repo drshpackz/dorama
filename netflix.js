@@ -430,11 +430,11 @@
   // Манифест: ?t=<мс> без кэша; при ошибке — последний удачный из netflix_ver (работа без сети, §9).
   function loadManifest(done) {
     network().silent(base() + 'manifest.json?t=' + Date.now(), function (json) {
-      if (!json || typeof json !== 'object') { fallback(500); return; }
+      if (!json || typeof json !== 'object' || !json.files) { fallback('parse'); return; }
       setManifest(json, false);
       if (json.schema === SCHEMA) storageSet('netflix_ver', json);
       done(0);
-    }, function (xhr) { fallback(errCode(xhr)); }, false, { timeout: T_MANIFEST });
+    }, function (xhr, ex) { fallback(ex === 'parsererror' || (xhr && xhr.status === 200) ? 'parse' : errCode(xhr)); }, false, { timeout: T_MANIFEST });
     function fallback(code) {
       var saved = storageGet('netflix_ver', '');
       if (saved && typeof saved === 'object' && saved.files) { setManifest(saved, true); done(0); }
