@@ -6,7 +6,13 @@
 
 For each language of (ru, en): TMDB videos on YouTube in that language of type Trailer,
 Teaser or Clip; Trailer before Teaser before Clip, official before fan-made within a
-type, then the newest; the first one wins. Flags are reserved for phase 2 ("s").
+type, then the newest; the first one wins.
+
+flags: "s" -- subtitles burned into the picture, so the audio is not the token's language
+(TMDB tags by the language of the text): "Official Trailer [Subtitled]" in en has the
+original audio with English subtitles, "Русский трейлер (Субтитры)" in ru has English
+audio with Russian subtitles. Found by the video name (SUBTITLED); the plugin labels the
+audio by it and checks the same pattern on its own live TMDB lookups (netflix.js TR_SUB).
 """
 import re
 
@@ -14,7 +20,9 @@ TYPES = {'Trailer': 'T', 'Teaser': 'Z', 'Clip': 'C'}
 RANK = {'Trailer': 0, 'Teaser': 1, 'Clip': 2}
 LANGS = ('ru', 'en')
 KEY = re.compile(r'^[A-Za-z0-9_-]{11}$')
-TOKEN = re.compile(r'^(?P<lang>ru|en):[TZC]:[A-Za-z0-9_-]{11}(:[a-z]+)?$')
+FLAGS = 's'
+TOKEN = re.compile(r'^(?P<lang>ru|en):[TZC]:[A-Za-z0-9_-]{11}(:[%s]+)?$' % FLAGS)
+SUBTITLED = re.compile(r'\[Subtitled\]|ENG SUB|SUB\]|субтитр', re.I)
 
 
 def pick(videos):
@@ -29,7 +37,8 @@ def pick(videos):
         cands.sort(key=lambda v: v.get('published_at') or '', reverse=True)
         cands.sort(key=lambda v: (RANK[v['type']], not v.get('official')))
         v = cands[0]
-        tokens.append('%s:%s:%s' % (lang, TYPES[v['type']], v['key']))
+        flags = 's' if SUBTITLED.search(v.get('name') or '') else ''
+        tokens.append('%s:%s:%s' % (lang, TYPES[v['type']], v['key']) + (':' + flags if flags else ''))
     return ' '.join(tokens)
 
 

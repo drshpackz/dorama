@@ -18,15 +18,18 @@
 
     // Мост трейлеров netflix.js (спека §8.4). Своя копия идеи youtube.html Lampa: тот мост не передаёт
     // YouTube cc_load_policy, cc_lang_pref и hl, а без них русские субтитры сами не включаются.
-    // Адрес: netflix-trailer.html?id=<bridgeId>&list=<пункты>&i=<с какого начать>.
+    // Адрес: netflix-trailer.html?id=<bridgeId>&list=<пункты>&i=<с какого начать>[&nocc=<ключи>][&hold=1].
     // list — пункты через запятую, пункт — ключи YouTube через «~» в порядке попытки: RU, при ошибке — EN.
-    // Сообщения родителю: {nf:id, ev:'bridge'|'ready'|'item'|'state'|'captions'|'error'|'end', …}.
-    // Команды от родителя: {nf:id, cmd:'toggle'|'play'|'pause'|'next'|'prev'|'destroy'}, {nf:id, cmd:'seek', by:±10}.
+    // nocc — ключи с русским звуком через запятую: субтитры YouTube им не навязываются и не проверяются.
+    // hold=1 — каждый пункт только загружается (cue) и ждёт команды play: плагин сначала показывает карточку.
+    // Сообщения родителю: {nf:id, ev:'bridge'|'ready'|'item'|'state'|'captions'|'ad'|'error'|'end', …}.
+    // Команды от родителя: {nf:id, cmd:'toggle'|'play'|'pause'|'next'|'prev'|'alt'|'destroy'}, {nf:id, cmd:'seek', by:±10}.
 
     var KEY = /^[A-Za-z0-9_-]{11}$/;
     var NEXT_AFTER_FATAL = 1500;   // мс до следующего пункта после ролика, который не играет никаким ключом
     var CAP_WAIT = 1500;           // мс после начала игры до проверки субтитров
     var CAP_TRIES = 6;             // повторы раз в секунду, пока у плеера нет списка дорожек
+    var AD_POLL = 1000;            // мс между проверками рекламы YouTube
 
     function param(name) {
       var m = new RegExp('[?&]' + name + '=([^&#]*)').exec(location.search || '');
@@ -49,10 +52,15 @@
     var id = param('id');
     var items = parseList(param('list'));
     var idx = Math.max(0, Math.min(items.length - 1, parseInt(param('i'), 10) || 0));
+    var nocc = {};         // ключи с русским звуком
+    var hold = param('hold') === '1';
     var kidx = 0;          // какой ключ пункта сейчас играет
     var vid = 0;           // номер загрузки: старые таймеры чужого ролика ничего не делают
-    var player = null, ready = false, done = false;
-    var capMode = '', capTimer = null, skipTimer = null;
+    var dir = 1;           // куда шли по списку: после мёртвого пункта — дальше в ту же сторону
+    var dead = {};         // пункты, у которых не сыграл ни один ключ
+    var player = null, ready = false, done = false, ad = false;
+    var capMode = '', capTimer = null, skipTimer = null, adTimer = null;
+    (function () { var a = param('nocc').split(','), i; for (i = 0; i < a.length; i++) if (KEY.test(a[i])) nocc[a[i]] = 1; })();
 
     function send(ev, data) {
       var msg = { nf: id, ev: ev }, k;
@@ -61,42 +69,68 @@
     }
     function key() { return (items[idx] || [])[kidx] || ''; }
 
-    // Новый ролик: пункт idx, ключ kidx.
+    // Новый ролик: пункт idx, ключ kidx. С hold — только загрузка, игра по команде play.
     function load() {
       var k = key();
       vid++; capMode = '';
       clearTimeout(capTimer); capTimer = null;
       clearTimeout(skipTimer); skipTimer = null;
+      ad = false;            // плагин сбрасывает рекламу сам по item
       if (!k) { fail(0); return; }
       send('item', { i: idx, key: k });
-      try { player.loadVideoById(k); } catch (e) { fail(-1); }
+      try { if (hold) player.cueVideoById(k); else player.loadVideoById(k); } catch (e) { fail(-1); }
     }
     function go(i) {
       if (done) return;
       clearTimeout(skipTimer); skipTimer = null;
       if (i >= items.length) { finish(); return; }
-      idx = Math.max(0, i); kidx = 0;
+      if (i < 0) { try { player.seekTo(0, true); } catch (e) {} return; }   // «назад» с первого живого пункта — с начала
+      idx = i; kidx = 0;
       load();
+    }
+    // Соседний живой пункт в сторону d (+1 или −1); за краем — −1 или items.length.
+    function step(from, d) {
+      var i = from + d;
+      while (i >= 0 && i < items.length && dead[i]) i += d;
+      return i;
     }
     function finish() {
       done = true; vid++;
-      clearTimeout(capTimer); clearTimeout(skipTimer);
+      clearTimeout(capTimer); clearTimeout(skipTimer); clearInterval(adTimer);
       try { player.stopVideo(); } catch (e) {}
       send('end');
     }
     // Ошибка ролика (коды 2, 5, 100, 101, 150; 153 не проверен): следующий ключ пункта. Ключей нет —
-    // error fatal, через 1,5 с следующий пункт, а после последнего — end.
+    // error fatal, через 1,5 с соседний живой пункт в ту же сторону, куда шёл зритель, а после последнего — end.
     function fail(code) {
-      var my;
+      var my, k = key(), next;
       if (kidx + 1 < (items[idx] || []).length) {
-        send('error', { i: idx, code: code, fatal: false });
+        send('error', { i: idx, key: k, code: code, fatal: false });
         kidx++;
         load();
         return;
       }
-      send('error', { i: idx, code: code, fatal: true });
+      if (dead[idx]) return;   // повтор той же ошибки: переход уже назначен
+      dead[idx] = true;
+      send('error', { i: idx, key: k, code: code, fatal: true });
+      next = step(idx, dir);
+      if (next < 0) { dir = 1; next = step(idx, 1); }   // назад живых нет — вперёд
       my = vid;
-      skipTimer = setTimeout(function () { if (my === vid) go(idx + 1); }, NEXT_AFTER_FATAL);
+      skipTimer = setTimeout(function () { if (my === vid) go(next); }, NEXT_AFTER_FATAL);
+    }
+
+    // Реклама YouTube перед роликом: состояние −1, а время идёт, и в getOptions() есть модуль ad (замер 12.11.2026).
+    // Модуль ad остаётся в списке и после рекламы, поэтому одного его мало. Пока реклама идёт, клавиши YouTube
+    // не слушает, а дорожки субтитров — рекламные.
+    function setAd(on) {
+      if (on === ad) return;
+      ad = on;
+      send('ad', { on: on });
+      if (!on && player && ready && !done) { capMode = ''; checkCaptions(CAP_WAIT); }
+    }
+    function pollAd() {
+      if (!player || !ready || done) return;
+      try { setAd(player.getPlayerState() === -1 && (player.getCurrentTime() || 0) > 0.3 && has(player.getOptions(), 'ad')); } catch (e) {}
     }
 
     // Русские субтитры — попытка, не проверено (§8.4). getOption('captions', 'tracklist') и
@@ -107,6 +141,9 @@
       var list = [], i, ru = null, mode;
       capTimer = null;
       if (my !== vid || !player || done) return;
+      // Реклама: её дорожки не в счёт — проверка после неё.
+      pollAd();
+      if (ad) { capTimer = setTimeout(function () { captions(my, tries); }, 1000); return; }
       try {
         if (has(player.getOptions(), 'captions')) list = player.getOption('captions', 'tracklist');
         if (Object.prototype.toString.call(list) !== '[object Array]') list = [];
@@ -128,7 +165,8 @@
         try { player.setOption('captions', 'track', { languageCode: ru.languageCode }); } catch (e) {}
       } else if (list.length) {
         try {
-          player.setOption('captions', 'track', { languageCode: source(list).languageCode, translationLanguage: { languageCode: 'ru' } });
+          // Без имени языка YouTube пишет в уведомлении «… >> undefined».
+          player.setOption('captions', 'track', { languageCode: source(list).languageCode, translationLanguage: { languageCode: 'ru', languageName: 'Русский' } });
           mode = 'auto';
         } catch (e) { mode = 'none'; }
       } else mode = 'none';
@@ -148,14 +186,21 @@
     // Проверка один раз на ролик; модуль субтитров, загруженный позже ответа none, — повод проверить снова.
     function checkCaptions(delay, late) {
       var my = vid;
-      if (done || (capMode && !(late && capMode === 'none'))) return;
+      if (done) return;
+      if (nocc[key()]) { noCaptions(); return; }
+      if (capMode && !(late && capMode === 'none')) return;
       clearTimeout(capTimer);
       capTimer = setTimeout(function () { captions(my, 0); }, delay);
     }
 
+    // Русский звук: субтитры не навязываются (cc_load_policy=1 включил бы их сам) и вердикта нет.
+    function noCaptions() {
+      try { if (player && has(player.getOptions(), 'captions')) player.unloadModule('captions'); } catch (e) {}
+    }
+
     function destroy() {
       done = true; vid++;
-      clearTimeout(capTimer); clearTimeout(skipTimer);
+      clearTimeout(capTimer); clearTimeout(skipTimer); clearInterval(adTimer);
       try { if (player) player.destroy(); } catch (e) {}
       player = null; ready = false;
     }
@@ -172,11 +217,20 @@
         }
         else if (d.cmd === 'play') player.playVideo();
         else if (d.cmd === 'pause') player.pauseVideo();
-        else if (d.cmd === 'next') go(idx + 1);
-        else if (d.cmd === 'prev') go(idx - 1);
-        else if (d.cmd === 'seek') player.seekTo(Math.max(0, (player.getCurrentTime() || 0) + (+d.by || 0)), true);
+        else if (d.cmd === 'next') { dir = 1; go(step(idx, 1)); }
+        else if (d.cmd === 'prev') { dir = -1; go(step(idx, -1)); }
+        // Запасной ключ пункта без ошибки (реклама на русском ролике — английский).
+        else if (d.cmd === 'alt') { if (kidx + 1 < (items[idx] || []).length) { kidx++; load(); } }
+        else if (d.cmd === 'seek' && !ad) seek(+d.by || 0);
       } catch (ex) {}
     });
+
+    // ±10 с. За концом ролика — конец пункта, как state 0: без этого YouTube начинал тот же ролик с нуля.
+    function seek(by) {
+      var t = (player.getCurrentTime() || 0) + by, d = player.getDuration() || 0;
+      if (by > 0 && d > 0 && t >= d - 1) { go(step(idx, 1)); return; }
+      player.seekTo(Math.max(0, t), true);
+    }
 
     window.onYouTubeIframeAPIReady = function () {
       var first = key();
@@ -186,7 +240,7 @@
         height: '100%',
         videoId: first,
         playerVars: {
-          autoplay: 1, controls: 0, cc_load_policy: 1, cc_lang_pref: 'ru', hl: 'ru', rel: 0, playsinline: 1,
+          autoplay: hold ? 0 : 1, controls: 0, cc_load_policy: 1, cc_lang_pref: 'ru', hl: 'ru', rel: 0, playsinline: 1,
           modestbranding: 1, iv_load_policy: 3, fs: 0, enablejsapi: 1, origin: origin()
         },
         events: {
@@ -194,19 +248,21 @@
             if (done) return;
             ready = true;
             send('ready');
+            adTimer = setInterval(pollAd, AD_POLL);
             if (first) send('item', { i: idx, key: first });
             else fail(0);
           },
           onStateChange: function (e) {
             var s = e ? e.data : -1;
             if (done) return;
+            if (s === 1) pollAd();
             send('state', { s: s });
             if (s === 1) checkCaptions(CAP_WAIT);
-            else if (s === 0) go(idx + 1);     // конец ролика — следующий пункт
+            else if (s === 0) { dir = 1; go(step(idx, 1)); }     // конец ролика — следующий пункт
           },
           onError: function (e) { if (!done) fail(e ? e.data : -1); },
-          // Модуль субтитров загрузился (или сменился): проверить дорожки сразу.
-          onApiChange: function () { checkCaptions(0, true); }
+          // Модуль субтитров или рекламы загрузился (или сменился): проверить сразу.
+          onApiChange: function () { pollAd(); checkCaptions(0, true); }
         }
       });
     };
