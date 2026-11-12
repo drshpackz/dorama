@@ -4025,7 +4025,7 @@
     try { if (S.id) S.frame[0].contentWindow.postMessage({ nf: S.id, cmd: 'destroy' }, '*'); } catch (e) {}
     clearTimeout(S.wait); clearTimeout(S.nudge); clearTimeout(S.cardT);
     S.id = 'nf' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-    S.ready = false; S.idx = 0; S.key = S.items[0].keys[0]; S.state = -1; S.caps = ''; S.ad = false; S.cardIdx = -1;
+    S.ready = false; S.idx = 0; S.key = S.items[0].keys[0]; S.state = -1; S.caps = ''; S.ad = false; S.cardIdx = -1; S.deadI = {};
     S.frame.attr('src', BRIDGE_URL + '?id=' + S.id + '&list=' + encodeURIComponent(list.join(',')) + '&i=0' +
       (ru.length ? '&nocc=' + encodeURIComponent(ru.join(',')) : '') + (S.show ? '&hold=1' : ''));
     S.wait = setTimeout(trNoBridge, TR_WAIT);
@@ -4080,9 +4080,18 @@
     if (!S || S.fin) return;
     if (d > 0 && S.ad && trAlt(S)) { S.pend = ''; trSend(S, 'alt'); trWake(true); return; }
     if (!S.countdown) { trWake(true); return; }
+    // ↑ на карточке первого живого пункта: назад некуда — карточка идёт заново, ролик ждёт её конца. Мост
+    // на «prev» с первого пункта перематывает ролик в начало и пустил бы его под карточкой без таймера.
+    if (d < 0 && S.card && trFirstLive(S)) { trCard(S); trWake(true); return; }
     clearTimeout(S.cardT); S.cardT = null;   // карточка остаётся до карточки соседнего пункта
     trSend(S, d > 0 ? 'next' : 'prev');
     trWake(true);
+  }
+  // Играющий пункт — первый живой: раньше него только пункты, у которых не сыграл ни один ключ.
+  function trFirstLive(S) {
+    var i;
+    for (i = 0; i < S.idx; i++) if (!(S.deadI && S.deadI[i])) return false;
+    return true;
   }
   // Английский ключ того же пункта после играющего (у русского ролика), иначе null.
   function trAlt(S) {
@@ -4152,6 +4161,7 @@
       return;
     }
     if (!S.countdown && !S.played) { trRetry(S, it, d.code); return; }
+    if (S.deadI && d.i >= 0) S.deadI[d.i] = true;
     if (gone) trRefind(it);
     clearTimeout(S.cardT); S.cardT = null;
     S.note = 'Ролик недоступен на YouTube' + (S.countdown ? ' — пропускаю' : '');
