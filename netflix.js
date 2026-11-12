@@ -284,6 +284,9 @@
     return d1 + ' ' + MON_SHORT[m1] + ' ' + y1 + ' – ' + d2 + ' ' + MON_SHORT[m2] + ' ' + y2;
   }
   function monthYear(W) { var d = weekSun(W); return MON_SHORT[d.getUTCMonth()] + ' ' + d.getUTCFullYear(); }
+  // Именительный падеж для диапазонов досье: «май 2022 – февр. 2026» (monthYear — родительный: «с мая 2022»).
+  var MON_NOM_SHORT = ['янв.', 'февр.', 'март', 'апр.', 'май', 'июнь', 'июль', 'авг.', 'сент.', 'окт.', 'нояб.', 'дек.'];
+  function monthYearNom(W) { var d = weekSun(W); return MON_NOM_SHORT[d.getUTCMonth()] + ' ' + d.getUTCFullYear(); }
   function dayLabel(str, noYear) {
     var t = parseDay(str), d;
     if (isNaN(t)) return str || '';
@@ -1871,14 +1874,20 @@
     else noty('Нет карточки TMDB: ' + text);
   }
   // Меню долгого OK (interaction/card.js:448, 474; §8.3): сверху трейлеры, «Netflix: путь в чартах»,
-  // «Похожие в топе», у карточки недели — «Открыть неделю …», разделитель, дальше меню Lampa.
-  // У заглушки без id меню Lampa (закладки, лайки) бессмысленно: вместо него — поиск.
+  // «Где в топе сейчас», «Похожие в топе», у карточки недели — «Открыть неделю …», разделитель, дальше
+  // меню Lampa. Заглушка, которую плагин уже нашёл в TMDB (T.id), получает карточку и меню Lampa; без
+  // id меню Lampa (закладки, лайки) бессмысленно: вместо него — поиск. «Трейлера нет» — подпись досье,
+  // а не мёртвый первый пункт: меню открывается на действии.
   function cardMenuShow(menu, el, data) {
-    var nf = data && data.nf, T = nf ? D.T[nf.n] : null, a = activeObj(), top, i;
+    var nf = data && data.nf, T = nf ? D.T[nf.n] : null, a = activeObj(), top = [], tr, none = false, now, i;
     if (!T) return;
+    if (!data.id && T.id) resolveCard(data, T, menu);
     if (!data.id) menu.splice(0, menu.length, { title: 'Найти в Lampa', subtitle: 'нет карточки TMDB', nf_act: 'search' });
-    top = trailerItems(T);
-    top.push({ title: 'Netflix: путь в чартах', subtitle: T.gw ? T.gw + ' нед. в мировом топе' : 'только чарты стран', nf_act: 'dossier' });
+    tr = trailerItems(T);
+    for (i = 0; i < tr.length; i++) { if (tr[i].noenter) none = true; else top.push(tr[i]); }
+    top.push({ title: 'Netflix: путь в чартах', subtitle: (T.gw ? T.gw + ' нед. в мировом топе' : 'только чарты стран') + (none ? ' · трейлера нет' : ''), nf_act: 'dossier' });
+    now = nowPlaces(T.n);
+    if (now.length) top.push(nowItem(now, { nf_act: 'now' }));
     if (similarSpec(T)) top.push({ title: 'Похожие в топе', nf_act: 'similar' });
     if (nf.wk != null && nf.wk >= 0 && !(a && a.component === 'netflix_weeks')) top.push({ title: 'Открыть неделю ' + weekLabel(nf.wk, { short: true }), nf_act: 'week', w: nf.wk });
     top.push({ title: '', separator: true });
@@ -1893,6 +1902,7 @@
     setTimeout(function () {
       if (a.nf_act === 'search') { openTitle(data); return; }
       if (!T) return;
+      if (a.nf_act === 'now') { showNowCountries(T); return; }
       if (a.nf_act === 'dossier') showDossier(T);
       else if (a.nf_act === 'similar') openSimilar(T);
       // Неделя ряда — в чарте экрана; рекорды Зала славы считаются по миру.
@@ -3056,32 +3066,126 @@
     out.sort(function (a, b) { return (a.W - b.W) || (a.cat - b.cat) || (a.pl - b.pl); });
     return out;
   }
-  // Сезоны в мировом топе по первой неделе: недели, лучшее место, самая длинная серия на №1.
+  // Номер сезона из подписи Netflix для порядка в досье: «Season 2» → 2, «Part 5» → 5, «Season 1 Part 2» →
+  // 1,02, «3» → 3; −1 — без номера («Limited Series», дата эфира).
+  function seasonNum(label) {
+    var s = label || '', m;
+    if ((m = /^(?:Season|Series|Temporada|시즌|S)\s?(\d+)(?:\s*:?\s*Part\s*(\d+))?/i.exec(s))) return +m[1] + (m[2] ? m[2] / 100 : 0);
+    if ((m = /^(\d+)(?:st|nd|rd|th) Season/i.exec(s))) return +m[1];
+    if ((m = /^(?:Part|Volume|Chapter|Book) (\d+)/i.exec(s))) return +m[1];
+    if (/^\d+$/.test(s)) return +s;
+    return -1;
+  }
+  // Сезоны в мировом топе по номеру (Netflix пишет их в порядке выхода в топ: «Часть 5, 1, 4…»): недели,
+  // лучшее место, самая длинная серия на №1. Сезон без подписи (N/A у Netflix) у сериала, где первого
+  // сезона нет, — это первый сезон («Очень странные дела»: N/A, 2, 3, 4, 5). Без номера — в конце, по первой неделе.
   function seasonStats(n) {
-    var pos = titlePositions(n), by = {}, out = [], i, p, s;
+    var pos = titlePositions(n), by = {}, out = [], T = D.T[n], one = false, i, p, s;
     for (i = 0; i < pos.length; i++) {
       p = pos[i]; s = by[p.sid];
-      if (!s) { s = by[p.sid] = { sid: p.sid, weeks: 0, best: 99, streak: 0, run: 0, l1: -9 }; out.push(s); }
+      if (!s) { s = by[p.sid] = { sid: p.sid, weeks: 0, best: 99, streak: 0, run: 0, l1: -9, i: out.length, num: seasonNum(slabel(p.sid)) }; out.push(s); }
       s.weeks++;
       if (p.pl < s.best) s.best = p.pl;
       if (p.pl === 1) { s.run = s.l1 === p.W - 1 ? s.run + 1 : 1; s.l1 = p.W; if (s.run > s.streak) s.streak = s.run; }
     }
+    for (i = 0; i < out.length; i++) if (Math.floor(out[i].num) === 1) one = true;
+    for (i = 0; i < out.length && !one; i++) if (!slabel(out[i].sid) && T && T.k === 1 && out.length > 1) { out[i].num = 1; one = true; }
+    out.sort(function (a, b) { return ((a.num >= 0 ? a.num : 1e9) - (b.num >= 0 ? b.num : 1e9)) || (a.i - b.i); });
     return out;
   }
-  function seasonName(sid, T) { return seasonLong(slabel(sid)) || (T.k ? 'Сериал' : 'Фильм'); }
-  // Досье открывается, когда индекс и недели мира в памяти; «Назад» возвращает пульт туда, откуда пришли.
-  function showDossier(T) {
-    var enabled = '', back;
+  function seasonName(sid, T, num) { return seasonLong(slabel(sid)) || (num === 1 ? 'Сезон 1' : T.k ? 'Сериал' : 'Фильм'); }
+  // Где тайтл в топе на последней неделе (home.c, 93 страны): [{c, pl, kind}], лучшее место сезона в стране,
+  // по месту, затем по названию страны.
+  function nowPlaces(n) {
+    var cc = (D.home && D.home.c) || {}, by = {}, out = [], k, kind, list, p, x;
+    for (k in cc) {
+      if (!cc.hasOwnProperty(k)) continue;
+      for (kind = 0; kind < 2; kind++) {
+        list = (cc[k] && cc[k][kind]) || [];
+        for (p = 0; p < list.length; p++) {
+          if (owner(list[p]) !== n) continue;
+          x = by[k];
+          if (!x) { x = by[k] = { c: k, pl: p + 1, kind: kind, sid: list[p], name: countryName(k) }; out.push(x); }
+          else if (p + 1 < x.pl) { x.pl = p + 1; x.kind = kind; x.sid = list[p]; }
+        }
+      }
+    }
+    out.sort(function (a, b) { return (a.pl - b.pl) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0) || (a.kind - b.kind); });
+    return out;
+  }
+  // Пункт «Где в топе сейчас · 12 стран», подпись — «№1 в 5 · 7–13 окт.».
+  function nowItem(now, extra) {
+    var one = 0, it, i, k;
+    for (i = 0; i < now.length; i++) if (now[i].pl === 1) one++;
+    it = { title: 'Где в топе сейчас · ' + now.length + ' ' + plural(now.length, 'страна', 'страны', 'стран'),
+      subtitle: (one ? '№1 в ' + one + ' · ' : '') + (D.home && D.home.w != null ? weekLabel(D.home.w, { short: true }) : '') };
+    for (k in extra) if (extra.hasOwnProperty(k)) it[k] = extra[k];
+    return it;
+  }
+  // Select стран, где тайтл в топе этой недели: место и список. OK — чарт этой страны (c=XX).
+  function showNowCountries(T, back) {
+    var now = nowPlaces(T.n), items = [], i, x, lab;
+    back = back || ctlBack();
+    for (i = 0; i < now.length; i++) {
+      x = now[i]; lab = seasonLong(slabel(x.sid));
+      items.push({ title: '№' + x.pl + ' · ' + x.name, subtitle: (x.kind ? 'Топ-10 сериалов' : 'Топ-10 фильмов') + (lab ? ' · ' + lab : ''), cc: x.c });
+    }
+    if (!items.length) { back(); return; }
+    Lampa.Select.show({
+      title: 'Где в топе сейчас · ' + titleName(T), items: items,
+      onSelect: function (a) { openCountryTop(a.cc, back); },
+      onBack: back
+    });
+  }
+  // Чарт страны: на главном экране плагина — как плитка страны (подбор сбрасывается, сортировка остаётся);
+  // с сетки, Истории, Зала славы и страницы карточки — новым экраном поверх, «Назад» вернёт обратно.
+  function openCountryTop(code, back) {
+    var a = activeObj(), o2 = emptyNf();
+    o2.c = code;
+    if (a && a.component === 'netflix') { o2.s = currentNf().s; applyNf(o2); return; }
+    ensure(['index', 'global', 'country/' + code], function () {
+      addRecent(code);
+      Lampa.Activity.push({ url: '', title: nfTitle(o2), component: 'netflix', source: 'tmdb', page: 1, nf: buildNf(o2) });
+    }, { fail: back });
+  }
+  // Заглушка, найденная в TMDB уже после отрисовки: карточка ряда получает id, постер и название, и меню
+  // Lampa (закладки, история) работает с настоящей карточкой; отметки меню — заново по Favorite.
+  function resolveCard(data, T, menu) {
+    var c = makeCard(T, data.nf ? data.nf.sid : null), st = null, k, i, it;
+    for (k in c) if (c.hasOwnProperty(k) && k !== 'nf') data[k] = c[k];
+    if (c.title) { delete data.name; delete data.original_name; delete data.first_air_date; }
+    try { st = Lampa.Favorite.check(data); } catch (e) {}
+    if (!st) return;
+    for (i = 0; i < menu.length; i++) {
+      it = menu[i];
+      if (!it.where) continue;
+      if (it.checkbox) it.checked = !!st[it.where];
+      if (it.collect) it.picked = !!st[it.where];
+    }
+  }
+  // Вернуть пульт контроллеру, который активен сейчас (ряд, сетка, страница карточки).
+  function ctlBack() {
+    var enabled = '';
     try { enabled = Lampa.Controller.enabled().name; } catch (e) {}
-    back = function () { if (enabled) Lampa.Controller.toggle(enabled); };
+    return function () { if (enabled) Lampa.Controller.toggle(enabled); };
+  }
+  // Досье открывается, когда индекс и недели мира в памяти; «Назад» возвращает пульт туда, откуда пришли.
+  // back — свой возврат (страница карточки возвращает фокус на свою кнопку), иначе — прежний контроллер.
+  function showDossier(T, back) {
+    back = back || ctlBack();
     ensure(['index', 'global'], function () { dossierMenu(T, back); }, { fail: back });
   }
-  // «Netflix: Игра в кальмара»: справка (noenter), «Сезоны», «Действия».
-  function dossierMenu(T, back) {
-    var items = [], st = seasonStats(T.n), streak = 0, ru, i;
+  // «Netflix: Игра в кальмара»: справка (noenter), «Сезоны», «Действия». Первая строка справки — вход в
+  // «Историю по неделям»: досье открывается на ней, справка видна целиком, и OK не попадает в пустой
+  // пункт. Без мирового топа — на первом действии; act — пункт, из которого вернулись. «Трейлера нет» —
+  // после действий.
+  function dossierMenu(T, back, act) {
+    var items = [], acts = [], dead = [], st = seasonStats(T.n), streak = 0, tr = trailerItems(T), now = nowPlaces(T.n), first = -1, ru, i, range;
     function info(title, sub) { items.push({ title: title, subtitle: sub || '', noenter: true }); }
     for (i = 0; i < st.length; i++) if (st[i].streak > streak) streak = st[i].streak;
-    if (T.gw > 0) info('В мировом топе: ' + T.gw + ' нед. · ' + monthYear(T.gf) + (monthYear(T.gl) !== monthYear(T.gf) ? ' – ' + monthYear(T.gl) : ''));
+    range = T.gw > 0 ? 'В мировом топе: ' + T.gw + ' нед. · ' + monthYearNom(T.gf) + (monthYearNom(T.gl) !== monthYearNom(T.gf) ? ' – ' + monthYearNom(T.gl) : '') : '';
+    if (range && st.length) items.push({ title: range + ' ›', subtitle: 'История по неделям' + (st.length > 1 ? ' · все сезоны' : ''), act: 'weeks' });
+    else if (range) info(range);
     else info('В мировом топе не был', 'только чарты стран');
     if (T.gb) info('Лучшее место: №' + T.gb + (T.gb === 1 && streak > 1 ? ' · ' + streak + ' нед. подряд' : ''));
     else if (T.cb) info('Лучшее место в странах: №' + T.cb);
@@ -3091,16 +3195,20 @@
     if (T.lv === 1) { if (st.length) info('Эфиров в мировом топе: ' + st.length); }
     else if (st.length > 1 || (st.length === 1 && slabel(st[0].sid))) {
       items.push({ title: 'Сезоны', separator: true });
-      for (i = 0; i < st.length; i++) info(seasonName(st[i].sid, T) + ' — ' + st[i].weeks + ' нед. · №' + st[i].best);
+      for (i = 0; i < st.length; i++) info(seasonName(st[i].sid, T, st[i].num) + ' — ' + st[i].weeks + ' нед. · №' + st[i].best);
     }
-    items.push({ title: 'Действия', separator: true });
-    items = items.concat(trailerItems(T));
-    if (st.length) items.push({ title: 'История по неделям ›', subtitle: st.length > 1 ? 'все сезоны' : '', act: 'weeks' });
-    if (similarSpec(T)) items.push({ title: 'Похожие в топе ›', act: 'similar' });
+    for (i = 0; i < tr.length; i++) { if (tr[i].noenter) dead.push(tr[i]); else acts.push(tr[i]); }
+    if (now.length) acts.push(nowItem(now, { act: 'now' }));
+    if (similarSpec(T)) acts.push({ title: 'Похожие в топе ›', act: 'similar' });
+    acts = acts.concat(dead);
+    if (acts.length) items = items.concat([{ title: 'Действия', separator: true }], acts);
+    for (i = 0; i < items.length; i++) if (!items[i].noenter && !items[i].separator && (first < 0 || (act && items[i].act === act))) first = i;
+    if (first >= 0) items[first].selected = true;
     Lampa.Select.show({
-      title: 'Netflix: ' + titleName(T), items: items,
+      title: 'Netflix: ' + titleName(T), items: items, nomark: true,
       onSelect: function (a) {
-        if (a.act === 'weeks') showWeekHistory(T, function () { dossierMenu(T, back); });
+        if (a.act === 'weeks') showWeekHistory(T, function () { dossierMenu(T, back, 'weeks'); });
+        else if (a.act === 'now') showNowCountries(T, function () { dossierMenu(T, back, 'now'); });
         else if (a.act === 'similar') openSimilar(T);
         else if (a.nf_act === 'trailer') playTrailer(T, a.lang, back);   // Select уже закрыт: пульт вернёт back
         else back();
@@ -3128,9 +3236,17 @@
   // ======================= Похожие в топе — сетка sim:<n> (§5.8) =======================
   // Тот же k; до двух жанровых групп тайтла по приоритету (Драма — только если других нет); та же
   // группа «Откуда» (первая подходящая в порядке §4.3, иначе страна производства). Без TMDB — нет.
+  // Правило ослабляется по шагам, пока в мировом индексе не наберётся SIM_MIN тайтлов: обе группы и
+  // «Откуда» → любая из групп и «Откуда» → обе группы → любая из групп. Не набралось — шаг, где их больше;
+  // пусто на всех шагах — null, и пункта «Похожие в топе» нет. Заголовок называет взятый шаг.
+  // Нужен индекс; шаг запоминается на сборку индекса.
+  var SIM_MIN = 5;
   function similarSpec(T) {
-    var g = [], names = [], origin = '', i, G, O, parts;
-    if (!T || !T.id) return null;
+    var g = [], names = [], origin = '', steps = [], pool = [], best = null, c, all, i, j, G, O, S, cnt, parts;
+    if (!T || !T.id || !D.index) return null;
+    c = D.simc;
+    if (!c || c.idx !== D.index) c = D.simc = { idx: D.index, m: {} };
+    if (c.m.hasOwnProperty(T.n)) return c.m[T.n];
     for (i = 0; i < GENRE_PRIORITY.length && g.length < 2; i++) {
       G = GENRE[GENRE_PRIORITY[i]];
       if (G.key === 'drama' && g.length) break;
@@ -3138,84 +3254,182 @@
     }
     for (i = 0; i < ORIGINS.length && !origin; i++) { O = ORIGINS[i]; if ((T.oc && O.ocSet[T.oc]) || (T.ol && O.olSet[T.ol])) origin = O.key; }
     if (!origin && T.oc) origin = 'c:' + T.oc;
-    parts = ['Похоже на «' + titleName(T) + '»', T.k ? 'сериалы' : 'фильмы'];
-    if (origin) parts.push(originText(origin, true));
-    if (names.length) parts.push(names.join('/'));
-    return { k: T.k, g: g, o: origin, title: parts.join(' · ') };
+    // Шаг без жанра и без «Откуда» — это просто все сериалы или фильмы: такого шага нет.
+    function step(both, withO) { if ((g.length || withO) && (!withO || origin) && (both || g.length > 1)) steps.push({ k: T.k, g: g, all: both, o: withO ? origin : '' }); }
+    step(true, true); step(false, true); step(true, false); step(false, false);
+    all = resultTitles(emptyNf());
+    for (i = 0; i < all.length; i++) if (all[i].n !== T.n && all[i].k === T.k && all[i].id) pool.push(all[i]);
+    for (j = 0; j < steps.length; j++) {
+      S = steps[j]; cnt = 0;
+      for (i = 0; i < pool.length; i++) if (similarMatch(pool[i], S)) cnt++;
+      if (cnt > (best ? best.count : 0)) { best = S; S.count = cnt; }
+      if (cnt >= SIM_MIN) break;
+    }
+    if (best) {
+      parts = ['Похоже на «' + titleName(T) + '»', T.k ? 'сериалы' : 'фильмы'];
+      if (best.o) parts.push(originText(best.o, true));
+      if (names.length) parts.push(names.join(best.all ? '/' : ' или '));
+      best.title = parts.join(' · ');
+    }
+    c.m[T.n] = best;
+    return best;
   }
-  // Кандидаты — тайтлы подбора o (по умолчанию весь мировой индекс), сам тайтл исключён. Нужны обе
-  // жанровые группы; если таких меньше пяти, хватает любой из двух.
+  function similarMatch(x, S) { return x.k === S.k && (!S.o || passOrigin(x, S.o)) && (!S.g.length || passGenres(x, S.g, S.all)); }
+  // Кандидаты — тайтлы подбора o (по умолчанию весь мировой индекс) по шагу similarSpec, сам тайтл исключён.
   function similarList(n, o) {
-    var T = D.T[n], S = similarSpec(T), ctx = sortCtx(o), all, both = [], any = [], i, x;
+    var T = D.T[n], S = similarSpec(T), ctx = sortCtx(o), all, list = [], i;
     if (!T) return null;
     if (!S) return { list: [], ctx: ctx };
     all = resultTitles(o);
-    for (i = 0; i < all.length; i++) {
-      x = all[i];
-      if (x.n === n || x.k !== S.k || !x.id || (S.o && !passOrigin(x, S.o))) continue;
-      if (passGenres(x, S.g, true)) both.push(x);
-      else if (S.g.length > 1 && passGenres(x, S.g, false)) any.push(x);
-    }
-    return { list: sortTitles(both.length >= 5 ? both : both.concat(any), ctx), ctx: ctx };
+    for (i = 0; i < all.length; i++) if (all[i].n !== n && all[i].id && similarMatch(all[i], S)) list.push(all[i]);
+    return { list: sortTitles(list, ctx), ctx: ctx };
   }
   // Сортировка по умолчанию — pop (§5.8): подбор текущего экрана к «Похожим» не относится.
   function openSimilar(T) { openGrid(emptyNf(), 'sim:' + T.n); }
 
   // ======================= Страница карточки Lampa (§5.8) =======================
-  // Ключ «tv:93405» → тайтл индекса. Только по данным в памяти: ради чужой карточки в сеть не ходим.
+  // Ключ «tv:93405» → тайтл. Сначала мировой индекс, затем всё, что уже в памяти: карточки home, местные
+  // тайтлы открытых стран (D.cty), найденные заглушки. Только по данным в памяти: ради чужой карточки в
+  // сеть не ходим.
   function titleByTmdb(method, id) {
-    var m = D.byTmdb, i, T, k;
-    if (!D.index || !id) return null;
-    if (!m) {
-      m = D.byTmdb = {};
-      for (i = 0; i < D.index.list.length; i++) {
-        T = D.T[D.index.list[i]];
-        if (!T || !T.id) continue;
-        k = (isTv(T) ? 'tv' : 'movie') + ':' + T.id;
-        if (!m.hasOwnProperty(k)) m[k] = T.n;
+    var m = D.byTmdb, i, T, k, n;
+    id = +id;
+    if (!id) return null;
+    if (D.index) {
+      if (!m) {
+        m = D.byTmdb = {};
+        for (i = 0; i < D.index.list.length; i++) {
+          T = D.T[D.index.list[i]];
+          if (!T || !T.id) continue;
+          k = (isTv(T) ? 'tv' : 'movie') + ':' + T.id;
+          if (!m.hasOwnProperty(k)) m[k] = T.n;
+        }
       }
+      k = method + ':' + id;
+      if (m.hasOwnProperty(k) && D.T[m[k]]) return D.T[m[k]];
     }
-    k = method + ':' + id;
-    return m.hasOwnProperty(k) ? D.T[m[k]] || null : null;
+    for (n in D.T) {
+      if (!D.T.hasOwnProperty(n)) continue;
+      T = D.T[n];
+      if (T && T.id === id && (isTv(T) ? 'tv' : 'movie') === method) return T;
+    }
+    return null;
   }
   var ICON_PLAY =
     '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
     '<path d="M8 5.6V18.4C8 19.2 8.9 19.7 9.6 19.2L19.2 12.8C19.8 12.4 19.8 11.6 19.2 11.2L9.6 4.8C8.9 4.3 8 4.8 8 5.6Z" fill="currentColor"/></svg>';
-  function fullButton(svg, text, fn) {
+  // Кнопка ряда. Lampa запоминает в last только кнопки, бывшие в ряду при create() (full/start.js:148-150),
+  // и «Назад» из досье или трейлера вернул бы фокус на «Подписаться» или «Реакции»: фокус на нашей кнопке
+  // пишем в last сами. fn(back): back возвращает пульт в ряд именно на эту кнопку.
+  function fullButton(svg, text, fn, obj) {
     var b = $('<div class="full-start__button selector nf-full-btn">' + svg + '<span>' + esc(text) + '</span></div>');
-    b.on('hover:enter', fn);
+    b.on('hover:focus hover:enter hover:hover hover:touch', function () {
+      var comp = obj && obj.activity && obj.activity.component, items = (comp && comp.items) || [], i, h;
+      for (i = 0; i < items.length; i++) {
+        h = items[i] && items[i].html;
+        if (h && h[0] && h[0].contains && h[0].contains(b[0])) { items[i].last = b[0]; return; }
+      }
+    });
+    b.on('hover:enter', function () { fn(fullBack(b)); });
     return b;
   }
-  // «▶ Трейлер (RU)» или «(EN)» и «Netflix · 42 нед.» (досье). Lampa 3.x — в видимый ряд
+  function fullBack(b) {
+    var enabled = '';
+    try { enabled = Lampa.Controller.enabled().name; } catch (e) {}
+    return function () {
+      if (enabled) Lampa.Controller.toggle(enabled);
+      if (b[0] && b[0].offsetParent !== null && !b.hasClass('focus')) { try { Lampa.Controller.collectionFocus(b[0], b.parent()[0]); } catch (e) {} }
+    };
+  }
+  // «Трейлер (RU)», «Тизер (EN)», «Ролик (EN + рус. суб.)»; tr = null — «Трейлер», плагин найдёт его в TMDB
+  // по нажатию, как ▶; искали и не нашли — «Трейлера нет».
+  function trailerButtonText(T) {
+    var k = trailerKeys(T);
+    k = k.ru || k.en;
+    if (!k) return T.tr === '' ? 'Трейлера нет' : 'Трейлер';
+    return (TR_KIND[k.type] || 'Трейлер') + ' (' + (k.lang === 'ru' ? 'RU' : 'EN' + (/s/.test(k.flags || '') ? ' + рус. суб.' : '')) + ')';
+  }
+  // Строка под описанием: «Netflix: 42 нед. в мировом топе · №1 9 нед. подряд · №1 в 94 странах · сейчас в
+  // топе 12 стран». Только из памяти: серия №1 — когда пришли недели мира, «сейчас» — из home.
+  function fullLine(T) {
+    var parts = [], st, streak = 0, cs = nowCountries(T.n), i;
+    function countries(n) { return n + ' ' + plural(n, 'страны', 'стран', 'стран'); }
+    if (T.gw > 0) {
+      parts.push(T.gw + ' нед. в мировом топе');
+      if (T.gb === 1) {
+        if (D.global) { st = seasonStats(T.n); for (i = 0; i < st.length; i++) if (st[i].streak > streak) streak = st[i].streak; }
+        parts.push(streak > 1 ? '№1 ' + streak + ' нед. подряд' : '№1 в мире');
+      } else if (T.gb) parts.push('лучшее №' + T.gb + ' в мире');
+    } else if (T.nc) parts.push('в топе ' + countries(T.nc));
+    if (T.c1) parts.push('№1 в ' + T.c1 + ' ' + plural(T.c1, 'стране', 'странах', 'странах'));
+    else if (T.gw > 0 && T.nc) parts.push('в топе ' + countries(T.nc));
+    else if (!T.gw && T.cb) parts.push('лучшее №' + T.cb);
+    if (cs.top) parts.push('сейчас в топе ' + countries(cs.top));
+    return parts.join(' · ');
+  }
+  // Кнопки «▶ Трейлер (RU)» и «Netflix · 42 нед.» (досье) и строка Netflix. Lampa 3.x — в видимый ряд
   // .full-start-new__buttons перед .button--options; иначе после .view--torrent, как online.js:2603-2617.
+  // true — готово (или карточка не из Netflix при загруженном индексе); false — ждать данных.
   function addFullButtons(e) {
-    var obj = e.object || {}, movie = (e.data && e.data.movie) || {}, method, T, render, k, btns = [], row, anchor, i;
-    if (!D.index) return;
+    var obj = e.object || {}, movie = (e.data && e.data.movie) || {}, method, T, render, btns = [], els = [], row, anchor, line, text, tb, i;
     method = obj.method || (movie.name || movie.original_name ? 'tv' : 'movie');
     T = titleByTmdb(method, obj.id || movie.id);
-    if (!T) return;
+    if (!T) return !!D.index;
     render = obj.activity && obj.activity.render ? obj.activity.render() : e.body;
-    if (!render || !render.find || render.find('.nf-full-btn').length) return;
-    k = trailerKeys(T);
-    k = k.ru || k.en;
-    if (k) btns.push(fullButton(ICON_PLAY, 'Трейлер (' + (k.lang === 'ru' ? 'RU' : 'EN') + ')', function () { playTrailer(T, k.lang); }));
-    btns.push(fullButton(ICON, 'Netflix' + (T.gw ? ' · ' + T.gw + ' нед.' : ''), function () { showDossier(T); }));
-    row = render.find('.full-start-new__buttons');
-    if (row.length) {
-      anchor = row.find('.button--options');
-      for (i = 0; i < btns.length; i++) { if (anchor.length) anchor.before(btns[i]); else row.append(btns[i]); }
-      return;
+    if (!render || !render.find) return true;
+    text = fullLine(T);
+    line = render.find('.nf-full-line');
+    if (line.length) line.find('.nf-full-line__text').text(text);
+    else if (text) {
+      line = $('<div class="nf-full-line" style="margin:0.9em 0 0.4em;font-size:1.15em;line-height:1.4;color:rgba(255,255,255,0.85)">' +
+        '<span style="color:#e50914;font-weight:700">Netflix</span>: <span class="nf-full-line__text"></span></div>');
+      line.find('.nf-full-line__text').text(text);
+      anchor = render.find('.full-start-new__details');
+      if (!anchor.length) anchor = render.find('.full-start__details, .full-start__tags').eq(0);
+      if (anchor.length) anchor.after(line);
     }
-    anchor = render.find('.view--torrent');
-    if (anchor.length) { for (i = btns.length - 1; i >= 0; i--) anchor.after(btns[i]); return; }
-    row = render.find('.full-start__buttons');
-    for (i = 0; i < btns.length; i++) row.append(btns[i]);
+    if (!render.find('.nf-full-btn').length) {
+      if (T.tr || (T.tr == null && T.id)) {
+        tb = fullButton(ICON_PLAY, trailerButtonText(T), function (back) { var k = trailerKeys(T); playTrailer(T, k.ru ? 'ru' : k.en ? 'en' : '', back); }, obj);
+        // После поиска в TMDB (tr был null) подпись узнаёт вид и язык ролика при следующем фокусе.
+        tb.on('hover:focus', function () { tb.find('span').text(trailerButtonText(T)); });
+        btns.push(tb);
+      }
+      btns.push(fullButton(ICON, 'Netflix' + (T.gw ? ' · ' + T.gw + ' нед.' : ''), function (back) { showDossier(T, back); }, obj));
+      row = render.find('.full-start-new__buttons');
+      if (row.length) {
+        anchor = row.find('.button--options');
+        for (i = 0; i < btns.length; i++) { if (anchor.length) anchor.before(btns[i]); else row.append(btns[i]); }
+      } else {
+        anchor = render.find('.view--torrent');
+        if (anchor.length) { for (i = btns.length - 1; i >= 0; i--) anchor.after(btns[i]); }
+        else { row = render.find('.full-start__buttons'); for (i = 0; i < btns.length; i++) row.append(btns[i]); }
+      }
+      // Пульт уже в ряду кнопок этой страницы (кнопки пришли с индексом): навигатор узнаёт о них сразу.
+      for (i = 0; i < btns.length; i++) els.push(btns[i][0]);
+      try { if (activeObj() === obj && Lampa.Controller.enabled().name === 'full_start') Lampa.Controller.collectionAppend(els); } catch (ex) {}
+    }
+    return !!D.global;
   }
+  // Страница открыта раньше данных (индекс, недели мира): кнопки и строка появляются, когда данные придут,
+  // пока страница жива. Lampa шлёт complite один раз (components/full.js:224-231). Ждём, только если плагин
+  // уже грузит данные в этой сессии (home в памяти или файл в пути), и не дольше FULL_WAIT.
+  var FULL_WAIT = 300000;
   function registerFull() {
     if (!Lampa.Listener || !Lampa.Listener.follow) return;
     Lampa.Listener.follow('full', function (e) {
+      var done = true, off, timer;
       if (!e || e.type !== 'complite') return;
-      try { addFullButtons(e); } catch (ex) { log('full', ex && ex.message); }
+      try { done = addFullButtons(e); } catch (ex) { log('full', ex && ex.message); }
+      if (done || !(D.home || D.wait.index || D.wait.global)) return;
+      off = onData(function (file) {
+        var obj = e.object || {}, comp = obj.activity && obj.activity.component;
+        if (!comp || comp.destroyed) { stop(); return; }
+        if (file !== 'index' && file !== 'global') return;
+        try { if (addFullButtons(e)) stop(); } catch (ex) { stop(); log('full', ex && ex.message); }
+      });
+      function stop() { clearTimeout(timer); off(); }
+      timer = setTimeout(stop, FULL_WAIT);
     });
   }
 
