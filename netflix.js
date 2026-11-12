@@ -1232,7 +1232,7 @@
     list = alltimeList();
     for (i = 0; i < list.length; i++) add('at', list[i].e[0], -i, 0, -1, fmtUnits(list[i].e[2]));
     // Порядок каждого списка: a ↓, затем b ↓, затем новее.
-    for (x in H) if (H.hasOwnProperty(x)) H[x].sort(function (p1, p2) { return (p2.a - p1.a) || (p2.b - p1.b) || (p2.W - p1.W); });
+    for (x in H) if (H.hasOwnProperty(x)) { for (i = 0; i < H[x].length; i++) H[x][i].i = i; H[x].sort(function (p1, p2) { return (p2.a - p1.a) || (p2.b - p1.b) || (p2.W - p1.W) || (p1.i - p2.i); }); }
     D.hall = H;
     return H;
   }
@@ -1246,7 +1246,7 @@
   function alltimeList() {
     var at = (D.home && D.home.alltime) || [], list = [], cat, i;
     for (cat = 0; cat < at.length; cat++) for (i = 0; i < (at[cat] || []).length; i++) if (at[cat][i]) list.push({ e: at[cat][i], cat: cat });
-    list.sort(function (a, b) { return (b.e[2] - a.e[2]) || (b.e[1] - a.e[1]); });
+    for (i = 0; i < list.length; i++) list[i].i = i; list.sort(function (a, b) { return (b.e[2] - a.e[2]) || (b.e[1] - a.e[1]) || (a.i - b.i); });
     return list;
   }
 
@@ -1628,7 +1628,7 @@
         for (i = 0; i < list.length; i++) { e = list[i]; if (e) acc(e[0], e[1] || 0); }
       }
     }
-    order.sort(function (a, b) { return sums[b] - sums[a]; });
+    order = order.map(function (s, k) { return [s, k]; }).sort(function (a, b) { return (sums[b[0]] - sums[a[0]]) || (a[1] - b[1]); }).map(function (x) { return x[0]; });
     for (i = 0; i < order.length && out.length < 10; i++) {
       sid = order[i]; T = D.T[owner(sid)];
       if (!T || !passFacets(T, o, '', true)) continue;
@@ -1658,7 +1658,7 @@
         for (i = 0; i < base.length; i++) if (test(base[i], G)) list.push(base[i]);
         if (list.length >= 5) groups.push({ key: G.key, title: G.title, list: list });
       }
-      groups.sort(function (a, b) { return b.list.length - a.list.length; });
+      for (i = 0; i < groups.length; i++) groups[i].i = i; groups.sort(function (a, b) { return (b.list.length - a.list.length) || (a.i - b.i); });
       for (j = 0; j < groups.length && j < 6; j++) rows.push(titlesRow(sum + ' · ' + groups[j].title, sortTitles(groups[j].list, ctx), o, ctx, 'xp:' + dim + ':' + groups[j].key));
     }
     // Те же условия, что у сеток xp:<измерение>:<значение> (xpMatch).
@@ -2058,7 +2058,7 @@
       if (!freq[T.oc]) { freq[T.oc] = 0; codes.push(T.oc); }
       freq[T.oc]++;
     }
-    codes.sort(function (a, b) { return freq[b] - freq[a]; });
+    codes = codes.map(function (c, j) { return [c, j]; }).sort(function (a, b) { return (freq[b[0]] - freq[a[0]]) || (a[1] - b[1]); }).map(function (x) { return x[0]; });
     for (i = 0; i < codes.length; i++) { k = 'c:' + codes[i]; items.push(liveItem({ title: countryName(codes[i]), ov: k, selected: o.o === k }, withNf(o, 'o', k), o.o === k)); }
     if (!items.length) items.push({ title: 'Нет данных TMDB о странах производства', ghost: true, noenter: true });
     Lampa.Select.show({
