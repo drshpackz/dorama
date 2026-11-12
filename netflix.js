@@ -301,32 +301,83 @@
   }
 
   // Подпись сезона на карточке (§7, .card__type): «С2», «Ч. 4», «Мини», «Т. 2», «2 нояб.» у WWE.
-  function seasonShort(label) {
-    var s = label || '', m, d;
-    if (!s) return '';
-    if ((m = /^(?:Season|Series|Temporada|S)\s?(\d+)(?:\s*:?\s*Part\s*(\d+))?/i.exec(s))) return 'С' + m[1] + (m[2] ? ' Ч.' + m[2] : '');
-    if ((m = /^(\d+)(?:st|nd|rd|th) Season/i.exec(s))) return 'С' + m[1];
-    if ((m = /^Part (\d+)/i.exec(s))) return 'Ч. ' + m[1];
-    if (/^Limited Series/i.test(s)) return 'Мини';
-    if ((m = /^Volume (\d+)/i.exec(s))) return 'Т. ' + m[1];
-    if ((m = /^Chapter (\d+)/i.exec(s))) return 'Гл. ' + m[1];
-    if ((m = /^Book (\d+)/i.exec(s))) return 'Кн. ' + m[1];
-    if ((d = parseEnDate(s))) return d.day + ' ' + MON_SHORT[d.mon];
-    if (/^\d{1,2}$/.test(s)) return 'С' + s;
-    return s.length > 10 ? s.slice(0, 10) : s;
+  // Шаблоны ищутся в любом месте подписи («New York: Season 1», «-Season1-», «시즌 1», «第一季»);
+  // прочее режется только по словам, число сезона остаётся: «Collection 10» → «Сборник 10».
+  var SEASON_CJK = '一二三四五六七八九十';
+  var SEASON_ROMAN = { I: 1, II: 2, III: 3, IV: 4, V: 5, VI: 6, VII: 7, VIII: 8, IX: 9, X: 10, 'Ⅱ': 2, 'Ⅲ': 3, 'Ⅳ': 4, 'Ⅴ': 5 };
+  function seasonTrim(label) { return String(label || '').replace(/^[\s:\-–—.]+|[\s:\-–—]+$/g, ''); }
+  var SEASON_WORDS = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
+  // Номер сезона в подписи или 0.
+  function seasonNo(s) {
+    var m;
+    if ((m = /Seasone?\s+(One|Two|Three|Four|Five|Six|Seven|Eight|Nine|Ten)\b/i.exec(s))) return SEASON_WORDS.indexOf(m[1].toLowerCase()) + 1;
+    if ((m = /(?:^|[^A-Za-z])(?:Season|Series|Temporada)\s?(\d+)/i.exec(s)) || (m = /^S\s?(\d+)\b/i.exec(s)) ||
+      (m = /(\d+)(?:st|nd|rd|th|ª)\s+(?:Season|temporada)/i.exec(s)) || (m = /시즌\s*(\d+)/.exec(s)) ||
+      (m = /第\s*(\d+)\s*(?:シリーズ|季|期|部)/.exec(s)) || (m = /^(\d{1,2})\.?$/.exec(s)) || (m = /^(\d{1,2})\.\s/.exec(s))) return +m[1];
+    if ((m = new RegExp('第([' + SEASON_CJK + '])[季期部]').exec(s))) return SEASON_CJK.indexOf(m[1]) + 1;
+    return SEASON_ROMAN[s] || 0;
   }
-  // То же полностью — для строки фокуса: «Сезон 2», «Часть 4», «Мини-сериал».
-  function seasonLong(label) {
-    var s = label || '', m, d;
+  // Целые слова до max знаков; отрезанное число (сезон, год, «①») возвращается в конец.
+  function seasonWords(s, max) {
+    var words = s.split(/\s+/), out = words[0], num = '', i, last = words[words.length - 1];
+    for (i = 1; i < words.length; i++) {
+      if ((out + ' ' + words[i]).length > max) break;
+      out += ' ' + words[i];
+    }
+    if (i >= words.length) return out;
+    if (/^(?:\d+|[①-⑳])$/.test(last)) num = last;
+    if (num) {
+      out = words[0];
+      for (i = 1; i < words.length && (out + ' ' + words[i]).length <= max - num.length - 2; i++) out += ' ' + words[i];
+    }
+    out = out.replace(/(?:[\s,:;\-–]+|\s+(?:the|of|and|in|a|an|to|with|vs\.?))+$/i, '');
+    return out + '…' + (num ? ' ' + num : '');
+  }
+  function seasonShort(label) {
+    var s = seasonTrim(label), m, d, n, p;
     if (!s) return '';
-    if ((m = /^(?:Season|Series|Temporada|S)\s?(\d+)(?:\s*:?\s*Part\s*(\d+))?/i.exec(s))) return 'Сезон ' + m[1] + (m[2] ? ', часть ' + m[2] : '');
-    if ((m = /^(\d+)(?:st|nd|rd|th) Season/i.exec(s))) return 'Сезон ' + m[1];
-    if ((m = /^Part (\d+)/i.exec(s))) return 'Часть ' + m[1];
-    if (/^Limited Series/i.test(s)) return 'Мини-сериал';
-    if ((m = /^Volume (\d+)/i.exec(s))) return 'Том ' + m[1];
+    if ((d = parseEnDate(s))) return d.day + ' ' + MON_SHORT[d.mon];
+    if (/^Limited Series/i.test(s)) return 'Мини';
+    p = (m = /\bPart\s*(\d+)/i.exec(s)) ? m[1] : '';
+    if ((n = seasonNo(s))) return 'С' + n + (p ? ' Ч.' + p : '');
+    if (/Final Season/i.test(s)) return 'Финал' + (p ? ' Ч.' + p : '');
+    if (p && /^Part/i.test(s)) return 'Ч. ' + p;
+    if (p) return seasonWords(s.replace(/\s*\bPart\s*\d+/i, ''), 10) + ' Ч.' + p;
+    if ((m = /\bVolume\s*(\d+)/i.exec(s))) return 'Т. ' + m[1];
+    if ((m = /\bChapter\s*(\d+)/i.exec(s))) return 'Гл. ' + m[1];
+    if ((m = /\bBook\s*(\d+)/i.exec(s))) return 'Кн. ' + m[1];
+    if ((m = /^Collection\s*(\d*)$/i.exec(s))) return 'Сборник' + (m[1] ? ' ' + m[1] : '');
+    if ((m = /^Episodes\s*\((\d+)\s*-\s*(\d+)\)/i.exec(s))) return 'Эп. ' + m[1] + '–' + m[2];
+    if (/^(?:Special|TVSP)$/i.test(s)) return 'Спецвыпуск';
+    if (/^(?:The )?(?:Live )?Semifinals?$/i.test(s)) return 'Полуфинал';
+    if (/^Quarterfinals?$/i.test(s)) return '1/4 финала';
+    if (/(?:^|\s)Finale?$/i.test(s)) return 'Финал';
+    return seasonWords(s, 16);
+  }
+  // То же полностью — для строки фокуса: «Сезон 2», «Часть 4», «Мини-сериал», «New York: Сезон 1».
+  function seasonLong(label) {
+    var s = seasonTrim(label), d, n;
+    if (!s) return '';
     if ((d = parseEnDate(s))) return d.day + ' ' + MON_GEN[d.mon] + ' ' + d.year;
-    if (/^\d{1,2}$/.test(s)) return 'Сезон ' + s;
-    return s;
+    if ((/^\d{1,2}\.?$/.test(s) || SEASON_ROMAN[s] || /^第|시즌|^Seasone?\s+[A-Za-z]+$/i.test(s)) && (n = seasonNo(s))) return 'Сезон ' + n;
+    s = s.replace(/\bLimited Series\b/i, 'Мини-сериал')
+      .replace(/\b(?:The )?Final Season\b/i, 'Финальный сезон')
+      .replace(/\b(\d+)(?:st|nd|rd|th) Season\b/i, 'Сезон $1')
+      .replace(/\b(\d+)ª temporada\b/i, 'Сезон $1')
+      .replace(/(^|[^A-Za-z])(?:Season|Series|Temporada)\s?(\d+)/gi, '$1Сезон $2')
+      .replace(/^S\s?(\d+)\b/i, 'Сезон $1')
+      .replace(/\bPart\s*(\d+)/gi, 'часть $1')
+      .replace(/\bVolume\s*(\d+)/gi, 'том $1')
+      .replace(/\bChapter\s*(\d+)/gi, 'глава $1')
+      .replace(/\bBook\s*(\d+)/gi, 'книга $1')
+      .replace(/^Collection\b/i, 'Сборник')
+      .replace(/^Episodes\s*\((\d+)\s*-\s*(\d+)\)/i, 'Эпизоды $1–$2')
+      .replace(/^(?:Special|TVSP)$/i, 'Спецвыпуск')
+      .replace(/^(?:The )?(?:Live )?Semifinals?$/i, 'Полуфинал')
+      .replace(/^Quarterfinals?$/i, 'Четвертьфинал')
+      .replace(/^Final$/i, 'Финал')
+      .replace(/(сезон(?: \d+)?):?\s+часть/gi, '$1, часть');
+    return s.charAt(0).toUpperCase() + s.slice(1);
   }
 
   function noty(text) { if (Lampa.Noty && Lampa.Noty.show) Lampa.Noty.show(text); }
@@ -691,9 +742,10 @@
     return out;
   }
 
-  // Сейчас (последняя неделя, home.c): в скольких странах тайтл №1 и в топе.
-  function nowCountries(n) {
-    var map = D.now, cc, list, k, kind, p, o, x, seen;
+  // Сейчас (последняя неделя, home.c): в скольких странах №1 и в топе. Позиция чарта (sid) считается
+  // по своему сезону (moveKey: «Люпен» Ч. 1 — не Ч. 4), тайтл без позиции — по всем сезонам (n).
+  function nowCountries(n, sid) {
+    var map = D.now, cc, list, k, kind, p, keys, j, x, seen;
     if (!map) {
       map = D.now = {};
       cc = (D.home && D.home.c) || {};
@@ -703,16 +755,19 @@
         for (kind = 0; kind < 2; kind++) {
           list = (cc[k] && cc[k][kind]) || [];
           for (p = 0; p < list.length; p++) {
-            o = owner(list[p]);
-            if (o == null) continue;
-            x = map[o] || (map[o] = { top: 0, one: 0 });
-            if (!seen[o]) { seen[o] = true; x.top++; }
-            if (p === 0) x.one++;
+            if (owner(list[p]) == null) continue;
+            keys = ['n' + owner(list[p])];
+            if (moveKey(list[p]) !== keys[0]) keys.push(moveKey(list[p]));
+            for (j = 0; j < keys.length; j++) {
+              x = map[keys[j]] || (map[keys[j]] = { top: 0, one: 0 });
+              if (!seen[keys[j]]) { seen[keys[j]] = true; x.top++; }
+              if (p === 0) x.one++;
+            }
           }
         }
       }
     }
-    return map[n] || { top: 0, one: 0 };
+    return map[sid != null ? moveKey(sid) : 'n' + n] || { top: 0, one: 0 };
   }
 
   // Годы и недели: год недели — год её воскресенья (§3.1).
@@ -796,9 +851,10 @@
     if (tp && tp.k !== undefined && tp.k !== kind) return [];
     return kind ? [2, 3] : [0, 1];
   }
-  // §7: «★ №1 · 2-я нед. · 17,2 млн просм.»; до 18.06.2023 — часы.
+  // §7: «★ №1 не англ. · 2-я нед. · 17,2 млн просм.»; до 18.06.2023 — часы. Список назван: под большой
+  // цифрой 2 или 3 слитого топа «★ №1» без списка читается как ошибка.
   function chartAge(e) {
-    var s = (e.pl === 1 ? '★ №1 · ' : '') + e.cw + '-я нед.';
+    var s = (e.pl === 1 ? '★ №1' + (LIST_SHORT[e.cat] ? ' ' + LIST_SHORT[e.cat].split(', ')[1] : '') + ' · ' : '') + e.cw + '-я нед.';
     var val = e.W >= vf() && e.v ? viewsLabel(e.v) : (e.h ? hoursLabel(e.h) : '');
     return val ? s + ' · ' + val : s;
   }
@@ -1417,22 +1473,30 @@
     return head;
   }
 
-  // Ряд 0 — шесть фишек подбора (§6.1).
+  // Ряд 0 — шесть фишек подбора (§6.1). Значение на фишке короткое, полное (full) — в полосе фокуса.
+  // Второй фасет фишки уходит в подпись: «Тип · с эфирами», «Год · вып. 2010-е».
   function chipsRow(o) {
-    var mode = nfMode(o), cnt = D.index && (!o.c || D.cty[o.c]) ? fmtInt(countNf(o)) : '…';
+    var mode = nfMode(o), cnt = D.index && (!o.c || D.cty[o.c]) ? fmtInt(countNf(o)) : '…', tp = o.t ? TYPE[o.t] : null;
+    var rel = releaseText(o), per = periodText(o, true);
     return tileRow('Подбор · данные по ' + dayLabel(D.man.v), [
       { tile: 'chip', act: 'chip', key: 'all', label: 'Фильтры', value: cnt, active: mode === 'pick' },
       { tile: 'chip', act: 'chip', key: 'c', label: 'Чарт', value: o.c ? countryName(o.c) : 'Весь мир', active: !!o.c },
-      { tile: 'chip', act: 'chip', key: 't', label: 'Тип', value: (o.t ? TYPE[o.t].title : 'Фильмы и сериалы') + (o.lv ? ' + эфиры' : ''), active: !!(o.t || o.lv) },
-      { tile: 'chip', act: 'chip', key: 'g', label: 'Жанр', value: genreText(o, true) || 'Любой', active: !!o.g.length },
-      { tile: 'chip', act: 'chip', key: 'o', label: 'Откуда', value: originText(o.o, true) || 'Любая страна', active: !!o.o },
-      { tile: 'chip', act: 'chip', key: 'pr', label: 'Год', value: yearChip(o), active: !!(o.p || o.r) }
+      { tile: 'chip', act: 'chip', key: 't', label: 'Тип' + (o.lv ? ' · с эфирами' : ''), active: !!(o.t || o.lv),
+        value: tp ? (tp.list !== undefined ? LIST_BADGE[tp.list] : tp.title) : 'Фильмы и сериалы',
+        full: (tp ? tp.title : 'Фильмы и сериалы') + (o.lv ? ' + прямые эфиры и спорт' : '') },
+      { tile: 'chip', act: 'chip', key: 'g', label: 'Жанр', value: genreText(o, true) || 'Любой', active: !!o.g.length, full: genreFull(o) || 'любой' },
+      { tile: 'chip', act: 'chip', key: 'o', label: 'Откуда', value: originText(o.o, true) || 'Любая страна', active: !!o.o, full: originText(o.o) || 'любая страна' },
+      { tile: 'chip', act: 'chip', key: 'pr', label: 'Год' + (per && rel ? ' · ' + rel : ''), value: yearChip(o), active: !!(o.p || o.r),
+        full: [o.p ? 'в топе: ' + periodText(o) : '', rel ? 'выпуск ' + RELEASE[o.r].title : ''].filter(Boolean).join(' · ') || 'всё время' }
     ], 'nf-chips');
   }
-  function yearChip(o) {
-    var p = periodText(o, true), r = releaseText(o);
-    if (p && r) return p + ' · ' + r;
-    return p || r || 'Всё время';
+  // Значение фишки «Год»: период в топе, иначе год выхода. Оба сразу — выпуск в подписи фишки.
+  function yearChip(o) { return periodText(o, true) || releaseText(o) || 'Всё время'; }
+  // Все жанры подбора полностью: «Драма, Комедия, Криминал»; при gm=and — через «и».
+  function genreFull(o) {
+    var names = [], i;
+    for (i = 0; i < GENRES.length; i++) if (o.g.indexOf(GENRES[i].key) >= 0) names.push(GENRES[i].title);
+    return names.join(o.gm === 'and' ? ' и ' : ', ');
   }
   // Хвост топ-10: «▶ Отсчёт 10→1» с числом трейлеров (§8.7; нет ни одного — нет и плитки) и «История →».
   function topTails(W, kind, cards) {
@@ -1487,8 +1551,9 @@
   }
   // Карточка списка Зала славы. tile — плитка-рекорд главного экрана: OK на ней открывает сетку
   // списка (rec); в рядах и сетке Зала славы OK ведёт на страницу тайтла (hk — только для подписи).
+  // Под карточкой — момент рекорда (hallMoment), не название списка: оно уже в заголовке ряда.
   function hallCard(key, e, tile) {
-    var x = { meta: e.badge, wk: e.W >= 0 ? e.W : null, tp: e.sid != null ? seasonShort(slabel(e.sid)) : '', age: HALL_T[key].title };
+    var x = { meta: e.badge, wk: e.W >= 0 ? e.W : null, tp: e.sid != null ? seasonShort(slabel(e.sid)) : '', age: hallMoment(key, e) };
     x[tile ? 'rec' : 'hk'] = key;
     return makeCard(D.T[e.n], e.sid, x);
   }
@@ -1736,7 +1801,7 @@
   function tileHtml(d) {
     var cls = 'nf-tile selector layer--visible layer--render', sub = d.sub ? '<div class="nf-tile__sub">' + esc(d.sub) + '</div>' : '', col;
     if (d.tile === 'chip') {
-      return '<div class="nf-chip selector layer--visible layer--render' + (d.active ? ' nf-chip--active' : '') + '">' +
+      return '<div class="nf-chip nf-chip--k-' + d.key + ' selector layer--visible layer--render' + (d.active ? ' nf-chip--active' : '') + '">' +
         '<div class="nf-chip__label">' + esc(d.label) + '</div><div class="nf-chip__value">' + esc(d.value) + '</div></div>';
     }
     if (d.tile === 'year') {
@@ -1786,18 +1851,27 @@
     if (nf.meta) return '<div class="nf-meta">' + esc(nf.meta) + '</div>';
     return '';
   }
-  // Место, движение или бейдж, подпись сезона, строка под названием. HTML — только через jQuery:
-  // Lampa переопределяет Element.append. В рядах зовётся по событию line, в сетке (B3) — из cardRender.
+  // ▶ под бейджем правого угла: у тайтла есть ролик; «▶ RU» — есть русская озвучка (§8). Треугольник —
+  // CSS, как стрелки движения.
+  function trailerBadge(nf, under) {
+    var k = trailerKeys(D.T[nf.n]);
+    if (!k.ru && !k.en) return '';
+    return '<div class="nf-trb' + (under ? '' : ' nf-trb--top') + '"><i></i>' + (k.ru ? '<b>RU</b>' : '') + '</div>';
+  }
+  // Место, движение или бейдж, ▶ трейлера, подпись сезона, строка под названием. HTML — только через
+  // jQuery: Lampa переопределяет Element.append. В рядах зовётся по событию line, в сетке (B3) — из cardRender.
   function decorateCard(el, nf) {
     var view, ty, age, html;
-    if (!el || !el.find || !nf || el.hasClass('nf-dec')) return;
+    if (!el || !el.find || !nf || typeof nf !== 'object' || el.hasClass('nf-dec')) return;
     el.addClass('nf-dec');
     view = el.find('.card__view');
+    el[0].nf_card = nf;   // полоска мест дорисовывается, когда придёт global
     if (nf.rank) {
-      view.append('<div class="nf-rank' + (nf.rank === 1 ? ' nf-rank--1' : '') + '">' + nf.rank + '</div>');
+      view.append('<div class="nf-rank' + (nf.rank === 1 ? ' nf-rank--1' : '') + '">' + nf.rank + '</div>' + rankTrail(nf));
       el.addClass(nf.rank >= 10 ? 'nf-card--r10' : 'nf-card--r');
     }
     html = metaHtml(nf);
+    html += trailerBadge(nf, !!html);
     if (html) view.append(html);
     if (nf.tp) {
       ty = el.find('.card__type');
@@ -1809,8 +1883,32 @@
       age.text(nf.age);
     }
   }
+  // Места слитого топа за шесть недель W−5…W — полоска на постере карточки мирового топ-10: «· 8 5 3 2 1».
+  // Абсолютная, внутри постера: высота ряда не меняется, когда она появляется после загрузки global.
+  var TRAIL = { g: null, m: {} };
+  function rankTrail(nf) {
+    var cats, out = '', Wk, r, k, m;
+    if (!nf.rank || !nf.pl || nf.cat == null || nf.wk == null || nf.sid == null || !D.global) return '';
+    cats = chartCats(nf.cat >= 2 ? 1 : 0, currentNf());
+    if (cats.indexOf(nf.cat) < 0) return '';
+    if (TRAIL.g !== D.global) { TRAIL.g = D.global; TRAIL.m = {}; }
+    for (Wk = nf.wk - 5; Wk <= nf.wk; Wk++) {
+      k = Wk + ':' + cats.join(',');
+      m = TRAIL.m[k] || (TRAIL.m[k] = hasWeek(Wk) ? rankMap(mergedWeek(Wk, cats).slice(0, 10)) : {});
+      r = m[moveKey(nf.sid)] || 0;
+      out += '<i class="nf-trail__c' + (r === 1 ? ' nf-trail__c--1' : r ? '' : ' nf-trail__c--out') + '">' + (r || '·') + '</i>';
+    }
+    return '<div class="nf-trail">' + out + '</div>';
+  }
   function registerBadges() {
     if (!Lampa.Listener || !Lampa.Listener.follow) return;
+    onData(function (file) {
+      if (file !== 'global') return;
+      $('.card.nf-dec').each(function () {
+        var nf = this.nf_card, card = $(this);
+        if (nf && nf.rank && !card.find('.nf-trail').length) card.find('.card__view').append(rankTrail(nf));
+      });
+    });
     Lampa.Listener.follow('line', function (e) {
       var i, item;
       if (!e || (e.type !== 'append' && e.type !== 'visible') || !e.data || !e.data.nf_row || !e.items) return;
@@ -1820,34 +1918,144 @@
       }
     });
   }
-  // Строка фокуса в шапке (§7): «Dead-End Job · №1 сериалов не на англ. · 2-я нед. · 8,7 млн просм. ·
-  // 44,4 млн ч · №1 в 22 странах · в топе 76 · трейлер: англ.». Активность вернёт свой заголовок при старте.
+  // ======================= Полоса фокуса (§7) =======================
+  // Своя полоса в две строки внизу экрана: что в фокусе и его числа («Работа с призрачными перспективами ·
+  // Мини-сериал» / «№1 сериалов не на англ. · 2-я нед. · №1 2 нед. подряд · 8,7 млн просм. · 44,4 млн ч ·
+  // №1 в 22 странах · в топе 76 стран · трейлер: англ.»). Шапка (Lampa.Head.title) остаётся заголовком
+  // экрана: сетки, «Похожие» и недели не теряют контекст. Полоса создаётся при первом фокусе в слайде
+  // активности; нижний отступ вертикального скролла (nf-info-pad) не даёт ей закрыть последний ряд.
+  // Пока экран не активен (опоздавший фокус старого экрана), ничего не пишется.
   function focusLine(card, object) {
-    var nf = card && card.nf, T, parts, lab, cs;
-    if (!Lampa.Head || !Lampa.Head.title) return;
-    if (!nf) { Lampa.Head.title(object.title || MENU_TITLE); return; }
-    T = D.T[nf.n];
-    if (!T) return;
+    var info;
+    if (!card || !object || !object.activity || activeObj() !== object) return;
+    info = card.tile ? tileInfo(card) : card.nf ? cardInfo(card.nf) : null;   // у плитки-подборки nf — строка подбора
+    if (info) infoStrip(object, info);
+  }
+  // info = [заголовок, факты, оригинальное название].
+  function infoStrip(object, info) {
+    var slide = object.activity.render(), el = slide.find('.nf-info');
+    if (!el.length) {
+      el = $('<div class="nf-info"><div class="nf-info__title"></div><div class="nf-info__facts"></div></div>');
+      slide.append(el);
+      slide.find('.scroll__body').filter(function () { return !$(this).closest('.scroll').hasClass('scroll--horizontal'); }).first().addClass('nf-info-pad');
+    }
+    el.find('.nf-info__title').html(esc(info[0]) + (info[2] ? '<span class="nf-info__orig">' + esc(info[2]) + '</span>' : ''));
+    el.find('.nf-info__facts').text(info[1] || '');
+  }
+  function cardInfo(nf) {
+    var T = D.T[nf.n], hk = nf.rec || nf.hk, parts = [], lab, x, cs, now;
+    if (!T) return null;
     lab = seasonLong(slabel(nf.sid));
-    parts = [titleName(T) + (lab ? ' · ' + lab : '')];
-    if (nf.rec || nf.hk) parts.push(HALL_T[nf.rec || nf.hk].title + ': ' + nf.meta);
-    if (nf.pl && nf.cat != null) parts.push('№' + nf.pl + ' ' + LIST_GEN[nf.cat]);
-    if (nf.cpl && nf.cc) parts.push('№' + nf.cpl + ' ' + countryPrep(nf.cc));
+    if (hk) {
+      // «Дольше всех №1 подряд: 9 нед.» — без второго «подряд» из бейджа; затем момент рекорда.
+      parts.push(HALL_T[hk].title + ': ' + (/подряд/.test(HALL_T[hk].title) ? String(nf.meta || '').replace(/\s*подряд$/, '') : nf.meta));
+      if (nf.age) parts.push(nf.age);
+    } else if (nf.pl && nf.cat != null) parts.push('№' + nf.pl + ' ' + LIST_GEN[nf.cat]);
+    else if (nf.cpl && nf.cc) parts.push('№' + nf.cpl + ' ' + countryPrep(nf.cc));
+    else if (/^91 день · /.test(nf.age || '')) {
+      // «Лучшие за всё время»: бейдж — просмотры (в сетке «№3 · 230,9 млн»), подпись — часы за 91 день.
+      x = /^(?:№(\d+) · )?(.*)$/.exec(String(nf.meta || ''));
+      parts.push('рейтинг Netflix за всё время' + (nf.rank || x[1] ? ': №' + (nf.rank || x[1]) : '') + ' · ' + x[2] + ' просм. и ' + nf.age.slice(10) + ' за первые 91 день');
+    } else if (nf.age) parts.push(nf.age + (/^\d{4}$/.test(nf.meta || '') ? ' ' + nf.meta : ''));
+    now = nf.wk == null || nf.wk === lastW();
+    if (!hk && !now && (nf.pl || nf.cpl)) parts.push(weekLabel(nf.wk, { short: true }));
     if (nf.cw) parts.push(nf.cw + '-я нед.');
+    x = streakAt(nf);
+    if (x > 1) parts.push('№1 ' + x + ' нед. подряд');
     if (nf.v) parts.push(viewsLabel(nf.v));
     if (nf.h) parts.push(hoursLabel(nf.h));
-    if (!nf.pl && !nf.cpl && T.gw) parts.push('в мировом топе ' + T.gw + ' нед.' + (T.gb ? ' · лучшее №' + T.gb : ''));
-    cs = nowCountries(T.n);
-    if (cs.one) parts.push('№1 в ' + cs.one + ' ' + plural(cs.one, 'стране', 'странах', 'странах'));
-    if (cs.top) parts.push('в топе ' + cs.top);
-    lab = trailerNote(T);
-    if (lab) parts.push(lab);
-    Lampa.Head.title(parts.join(' · '));
+    if (!nf.pl && !nf.cpl && !hk && T.gw) parts.push('в мировом топе ' + T.gw + ' нед.' + (T.gb ? ' · лучшее №' + T.gb : ''));
+    if (!nf.pl && !nf.cpl && T.c1 && hk !== 'c1') parts.push('№1 в ' + T.c1 + ' ' + plural(T.c1, 'стране', 'странах', 'странах') + ' за всё время');
+    if (now && !hk) {
+      cs = nowCountries(T.n, nf.sid);
+      x = nf.wk == null ? 'сейчас ' : '';
+      if (cs.one) parts.push(x + '№1 в ' + cs.one + ' ' + plural(cs.one, 'стране', 'странах', 'странах'));
+      if (cs.top) parts.push((cs.one ? '' : x) + 'в топе ' + cs.top + ' ' + plural(cs.top, 'страны', 'стран', 'стран'));
+    }
+    x = trailerNote(T);
+    if (x) parts.push(x);
+    return [titleName(T) + (lab ? ' · ' + lab : ''), parts.join(' · '), T.ru && T.t && T.ru !== T.t ? T.t : ''];
   }
+  // Серия №1 подряд по неделю карточки включительно: недели, где sid первый в своём списке (§7).
+  // Без global — только если серия оборвалась внутри недель home.
+  function streakAt(nf) {
+    var n = 0, W, wd, e;
+    if (nf.pl !== 1 || nf.cat == null || nf.wk == null || nf.sid == null) return 0;
+    for (W = nf.wk; W >= 0; W--) {
+      wd = weekData(W);
+      if (!wd) return D.global ? n : 0;
+      e = wd[nf.cat] && wd[nf.cat][0];
+      if (!e || e[0] !== nf.sid) return n;
+      n++;
+    }
+    return n;
+  }
+  // Плитки: фишка — полное значение и что делает OK; страна — её №1 сериал и фильм; подборка и хвост —
+  // что откроется.
+  var CHIP_HINT = { c: 'OK — выбрать страну чарта', t: 'OK — фильмы, сериалы, язык списка, эфиры', g: 'OK — выбрать жанры',
+    o: 'OK — страна или язык производства', pr: 'OK — год в топе и год выхода' };
+  var HALL_NOTE = 'серии №1, рекорды недели, долгожители, вернувшиеся через годы · OK — открыть';
+  function tileInfo(d) {
+    var list, T1, T2, o, sum, m, cc = D.man && D.man.cc ? Object.keys(D.man.cc).length : 0;
+    if (d.tile === 'chip') {
+      if (d.key === 'all') return ['Фильтры: ' + (nfSummary(currentNf()) || 'не заданы'), 'Под подбор подходит: ' + d.value + ' · OK — все фильтры в одном меню'];
+      return [String(d.label).split(' · ')[0] + ': ' + (d.full || d.value), (CHIP_HINT[d.key] || 'OK — изменить') + ' · долгое OK — сбросить'];
+    }
+    if (d.tile === 'year') return ['История топа · ' + d.value, 'OK — последняя неделя года: ' + weekLabel(d.W)];
+    if (d.tile === 'country') {
+      list = D.home && D.home.c && D.home.c[d.code];
+      T1 = list && list[1] && list[1].length ? D.T[owner(list[1][0])] : null;
+      T2 = list && list[0] && list[0].length ? D.T[owner(list[0][0])] : null;
+      return [d.title + ' · №1 этой недели', [T1 ? 'сериал: ' + titleName(T1) + seasonTail(list[1][0]) : '', T2 ? 'фильм: ' + titleName(T2) : '', 'OK — чарт страны'].filter(Boolean).join(' · ')];
+    }
+    if (d.act === 'nf') {
+      o = parseNf(d.nf); sum = nfSummary(o) || (o.s && SORT[o.s] ? 'весь топ, ' + SORT[o.s].by : '') || d.sub || '';
+      return [d.title, (sum ? 'Подбор: ' + sum + ' · ' : '') + 'OK — открыть'];
+    }
+    if (d.act === 'weeks') return [d.tile === 'tail' ? 'История топа' : d.title, (d.W != null ? 'по неделям назад от ' + weekLabel(d.W, { short: true }) : 'все недели топа с июля 2021') + ' · OK — открыть'];
+    if (d.act === 'hall') return [d.tile === 'tail' ? 'Зал славы' : d.title, 'Двенадцать списков рекордов: ' + HALL_NOTE];
+    if (d.act === 'chartMenu') return ['Все страны', (cc ? 'Чарты ' + cc + ' ' + plural(cc, 'страны', 'стран', 'стран') + ' по регионам · ' : '') + 'OK — выбрать страну'];
+    if (d.act === 'countdown') return ['Отсчёт 10→1', (d.sub ? d.sub + ' подряд, ' : '') + 'с 10-го места до 1-го · OK — смотреть'];
+    if (d.act === 'grid') {
+      m = /^wk(\d+)$/.exec(d.list || '');
+      return [d.title || (m ? 'Неделя ' + weekLabel(+m[1]) : 'Весь список'), (m ? 'все позиции четырёх списков Netflix' : 'весь список сеткой') + ' · OK — открыть'];
+    }
+    return [d.title || '', d.sub || ''];
+  }
+  function seasonTail(sid) { var s = seasonLong(slabel(sid)); return s ? ', ' + s.charAt(0).toLowerCase() + s.slice(1) : ''; }
+  // §8: какой ролик сыграет ▶. flags — у трейлеров с проверенными субтитрами («s», пакет трейлеров).
   function trailerNote(T) {
+    var k;
     if (T.tr === '') return 'трейлера нет';
     if (!T.tr) return '';
-    return /(^| )ru:/.test(T.tr) ? 'трейлер: рус.' : 'трейлер: англ.';
+    k = trailerKeys(T);
+    if (k.ru) return 'трейлер: рус.' + (k.en ? ', англ.' : '');
+    if (k.en) return 'трейлер: англ.' + (k.en.flags && String(k.en.flags).indexOf('s') >= 0 ? ' субт.' : '');
+    return '';
+  }
+  // Момент рекорда Зала славы (§5.7) — подпись под карточкой и в полосе фокуса: неделя рекорда, отрезок
+  // серии, годы в топе, откуда вернулся. e = {n, sid, W, a, b} из hallLists.
+  function hallMoment(key, e) {
+    var T = D.T[e.n] || {}, list = e.sid != null && D.global ? D.global.bySid[e.sid] : null, f, l;
+    if (key === 'streak') return e.W >= 0 ? weeksSpan(e.W, e.W + e.a - 1) : '';
+    if (key === 'whours' || key === 'wviews' || key === 'comet' || key === 'jump') return e.W >= 0 ? weekLabel(e.W, { short: true }) : '';
+    if (key === 'sleep') return e.W >= 0 ? 'вход ' + weekLabel(e.W, { short: true }) : '';
+    if (key === 'back') return e.W >= 0 ? monthNom(e.W - e.a) + ' → ' + monthNom(e.W) : '';
+    if (key === 'at') return 'просм. за первые 91 день';
+    if (list && list.length) { f = list[0].W; l = list[list.length - 1].W; }
+    else if (T.gf >= 0) { f = T.gf; l = T.gl; }
+    else return '';
+    if (key === 'runs') return l >= lastW() ? 'с ' + monthYear(f) + ' по сей день' : monthNom(f) + ' – ' + monthNom(l);
+    return weekYear(f) === weekYear(l) ? String(weekYear(f)) : weekYear(f) + '–' + weekYear(l);
+  }
+  function monthNom(W) { var d = weekSun(W); return MON_NOM[d.getUTCMonth()] + ' ' + d.getUTCFullYear(); }
+  // Отрезок недель W1…W2: «27 сент. – 28 нояб. 2021», через год — с годами.
+  function weeksSpan(W1, W2) {
+    var a, b;
+    if (W2 <= W1) return weekLabel(W1, { short: true });
+    a = new Date(weekSun(W1).getTime() - 6 * DAY); b = weekSun(W2);
+    if (a.getUTCFullYear() !== b.getUTCFullYear()) return a.getUTCDate() + ' ' + MON_SHORT[a.getUTCMonth()] + ' ' + a.getUTCFullYear() + ' – ' + b.getUTCDate() + ' ' + MON_SHORT[b.getUTCMonth()] + ' ' + b.getUTCFullYear();
+    return a.getUTCDate() + ' ' + MON_SHORT[a.getUTCMonth()] + ' – ' + b.getUTCDate() + ' ' + MON_SHORT[b.getUTCMonth()] + ' ' + b.getUTCFullYear();
   }
   // OK на карточке в ряду: плитка-рекорд — сетка списка Зала славы, остальное — страница тайтла.
   function cardSelect(card) {
@@ -3277,27 +3485,39 @@
   // Размеры и сдвиги цифр подобраны на глаз; на ТВ не проверено (§15, п. 6).
   var STYLE =
     '.items-line--type-nf-chips,.items-line--type-nf-tiles{padding-bottom:2.2em}' +
-    '.nf-chip{flex-shrink:0;width:13.6em;height:5.4em;margin-right:1em;padding:.7em 1em;box-sizing:border-box;border-radius:1em;background:rgba(255,255,255,.09);position:relative;display:flex;flex-direction:column;justify-content:center;transition:transform .15s}' +
-    '.nf-chip__label{font-size:.9em;opacity:.6;white-space:nowrap}' +
+    // Фишки и плитки: флекс и transform с -webkit- (WebKit 537/538 на ТВ, tv-compat-2). Шесть фишек
+    // помещаются в 1920 и 1280: ширина своя у каждой (§6.1), сумма ~76em при ширине экрана ~84em.
+    '.nf-chip{-webkit-flex-shrink:0;flex-shrink:0;width:12.4em;height:5.4em;margin-right:.9em;padding:.7em 1em;box-sizing:border-box;border-radius:1em;background:rgba(255,255,255,.09);position:relative;display:-webkit-box;display:-webkit-flex;display:flex;-webkit-box-orient:vertical;-webkit-flex-direction:column;flex-direction:column;-webkit-box-pack:center;-webkit-justify-content:center;justify-content:center;-webkit-transition:-webkit-transform .15s;transition:transform .15s}' +
+    '.nf-chip--k-all{width:8em}.nf-chip--k-t{width:14em}.nf-chip--k-g{width:12em}.nf-chip--k-pr{width:11.6em}' +
+    '.nf-chip__label{font-size:.9em;opacity:.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
     '.nf-chip__value{font-size:1.3em;font-weight:600;margin-top:.2em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
-    '.nf-chip.focus{background:#fff;color:#000;transform:scale(1.04)}' +
-    '.nf-chip--active::after{content:"";position:absolute;left:20%;right:20%;bottom:-.65em;height:.3em;border-radius:.3em;background:#ffd400}' +
-    '.nf-tile{flex-shrink:0;width:15em;height:7.5em;margin-right:1em;padding:.9em 1em;box-sizing:border-box;border-radius:1em;position:relative;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;color:#fff;background:rgba(255,255,255,.09);transition:transform .15s}' +
+    '.nf-chip.focus{background:#fff;color:#000;-webkit-transform:scale(1.04);transform:scale(1.04)}' +
+    // Черта активной фишки — внутри фишки: снаружи она оставалась под шапкой, когда ряд уезжал вверх.
+    '.nf-chip--active::after{content:"";position:absolute;left:1em;right:1em;bottom:.3em;height:.25em;border-radius:.25em;background:#ffd400}' +
+    '.nf-chip--active.focus::after{background:#e0a800}' +
+    '.nf-tile{-webkit-flex-shrink:0;flex-shrink:0;width:15em;height:7.5em;margin-right:1em;padding:.9em 1em;box-sizing:border-box;border-radius:1em;position:relative;overflow:hidden;display:-webkit-box;display:-webkit-flex;display:flex;-webkit-box-orient:vertical;-webkit-flex-direction:column;flex-direction:column;-webkit-box-pack:end;-webkit-justify-content:flex-end;justify-content:flex-end;color:#fff;background:rgba(255,255,255,.09);-webkit-transition:-webkit-transform .15s;transition:transform .15s}' +
     '.nf-tile__title{position:relative;font-size:1.3em;font-weight:700;line-height:1.2}' +
     '.nf-tile__sub{position:relative;font-size:.9em;opacity:.85;margin-top:.3em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
-    '.nf-tile.focus{transform:scale(1.06);box-shadow:0 0 0 .3em #fff}' +
+    '.nf-tile.focus{-webkit-transform:scale(1.06);transform:scale(1.06);box-shadow:0 0 0 .3em #fff}' +
     '.nf-tile--country{height:9em;background:#1c1c1e}' +
-    '.nf-tile__img{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .3s}' +
+    '.nf-tile__img{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:cover;opacity:0;-webkit-transition:opacity .3s;transition:opacity .3s}' +
     '.nf-tile__img--on{opacity:.45}' +
     '.nf-tile__code{position:absolute;left:.75em;top:.55em;font-size:1.5em;font-weight:900;letter-spacing:.04em}' +
     '.nf-tile--country .nf-tile__title,.nf-tile--country .nf-tile__sub,.nf-tile__code{text-shadow:0 0 .4em rgba(0,0,0,.9)}' +
-    '.nf-tile--tail{width:12.75em;height:19.1em;justify-content:center;align-items:center;text-align:center}' +
+    '.nf-tile--tail{width:12.75em;height:19.1em;-webkit-box-pack:center;-webkit-justify-content:center;justify-content:center;-webkit-box-align:center;-webkit-align-items:center;align-items:center;text-align:center}' +
     '.nf-tile--tail-short{width:12em;height:9em}' +
     '.items-line--type-nf-top{min-height:24em}' +
     '.items-line--type-nf-top .card.nf-card--r{margin-left:4.6em}' +
-    '.items-line--type-nf-top .card.nf-card--r10{margin-left:7.4em}' +
+    // У «10» две цифры: отступ такой, чтобы зазор до постера 9 был как у цифр 2–9 (home-10).
+    '.items-line--type-nf-top .card.nf-card--r10{margin-left:9.15em}' +
     '.nf-rank{position:absolute;right:100%;bottom:-.04em;margin-right:-.1em;font-size:9em;line-height:.8;font-weight:900;letter-spacing:-.07em;color:#141414;-webkit-text-stroke:.025em #cfcfcf;pointer-events:none}' +
     '.nf-rank--1{color:#d9a520;-webkit-text-stroke:.025em #fff3c4}' +
+    // Полоска мест: шесть клеток внизу постера, между цифрой места и оценкой TMDB.
+    '.nf-trail{position:absolute;left:1.6em;bottom:.6em;z-index:2;white-space:nowrap;pointer-events:none;font-size:.72em;line-height:1.45em}' +
+    '.nf-trail__c{display:inline-block;width:1.45em;height:1.45em;margin-right:.18em;border-radius:.3em;background:rgba(0,0,0,.72);color:#fff;font-style:normal;font-weight:700;text-align:center}' +
+    '.nf-trail__c:last-child{box-shadow:inset 0 0 0 .1em #fff}' +
+    '.nf-trail__c--1{color:#ffd400}' +
+    '.nf-trail__c--out{color:rgba(255,255,255,.4);background:rgba(0,0,0,.45)}' +
     '.nf-chip--year{width:10em}' +
     '.nf-chip--year .nf-chip__value{font-size:1.6em;margin-top:0}' +
     '.nf-chip--year .nf-chip__label{margin-top:.15em}' +
@@ -3307,6 +3527,17 @@
     '.nf-meta--down{color:#ff6b6b}.nf-meta--down i{border-top:.5em solid #ff6b6b}' +
     '.nf-meta--new{color:#ffd400}' +
     '.nf-meta--back{color:#6cc8ff}' +
+    // ▶ трейлера под бейджем угла; без бейджа — в самом углу.
+    '.nf-trb{position:absolute;right:.4em;top:2.4em;z-index:2;padding:.2em .55em;border-radius:1em;background:rgba(0,0,0,.78);color:#fff;font-size:.85em;font-weight:700;line-height:1.3;white-space:nowrap;pointer-events:none}' +
+    '.nf-trb--top{top:.4em}' +
+    '.nf-trb i{display:inline-block;width:0;height:0;vertical-align:-.02em;border-top:.4em solid transparent;border-bottom:.4em solid transparent;border-left:.62em solid #fff}' +
+    '.nf-trb b{margin-left:.3em;font-weight:700}' +
+    // Полоса фокуса (§7): две строки внизу экрана поверх следующего ряда; отступ скролла — под неё.
+    '.nf-info{position:absolute;left:0;right:0;bottom:0;z-index:5;padding:1.7em 1.5em .85em;color:#fff;pointer-events:none;background:rgba(0,0,0,.85);background:-webkit-linear-gradient(bottom,rgba(0,0,0,.95) 0,rgba(0,0,0,.93) 72%,rgba(0,0,0,0) 100%);background:linear-gradient(to top,rgba(0,0,0,.95) 0,rgba(0,0,0,.93) 72%,rgba(0,0,0,0) 100%)}' +
+    '.nf-info__title{font-size:1.35em;font-weight:700;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+    '.nf-info__orig{font-size:.72em;font-weight:400;opacity:.6;margin-left:.8em}' +
+    '.nf-info__facts{font-size:1.1em;line-height:1.35;max-height:2.7em;margin-top:.15em;opacity:.92;overflow:hidden}' +
+    '.nf-info-pad{padding-bottom:5.6em}' +
     // Оверлей трейлера (§8.5): выше шапки, меню и Select (55), ниже Noty (99). Подписи сверху: снизу —
     // субтитры YouTube.
     '.nf-trailer{position:fixed;left:0;top:0;right:0;bottom:0;z-index:70;background:#000;overflow:hidden}' +
