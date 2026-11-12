@@ -11,9 +11,11 @@
 "film:Once Upon a Time in the East": {"tmdb": "movie/1231374", "why": "словацкий «Vojna policajtov» 2024 (№1 Словакии 12–19.05.2024, Чехия); не квебекская драма 1974 года «Il était une fois dans l'Est»"},
 "film:River Wild": {"tmdb": "movie/1000475", "why": "River Wild 2023 (мир и США 06.08.2023, Бельгия 03.2024); не «Wild River» 1960 года"},
 "film:Spellbound": {"split": [{"countries": ["PH"], "to": "2023-12-31", "tmdb": "movie/667691"}, {"tmdb": "movie/592983"}], "why": "Филиппины 05.2023 — филиппинский «Spellbound» 2023; остальное — мультфильм Netflix 2024 (мир 24.11.2024); не Хичкок 1945 года"},
+"film:Street Fighter": {"tmdb": "movie/11667", "why": "фильм 1994 года (Кипр, одна неделя №10 по 11.10.2026); не фильм 2026 года, вышедший 13.10.2026, после этой недели"},
 "film:The King": {"split": [{"countries": ["KR"], "tmdb": "movie/434724"}, {"tmdb": "movie/504949"}], "why": "Корея 2023 — «더 킹» 2017; Россия 2021 и Швеция — The King 2019 Netflix (r3 §4.4)"},
 "film:The Man from Toronto": {"tmdb": "movie/667739", "why": "фильм Netflix 2022 (мир 26.06.2022; TMDB датирует его 23.12.2022); не британский фильм 1933 года"},
 "film:The Rise of Igbinogun": {"hide": true, "why": "Нигерия 2023, в TMDB не найден (r3 §4.4)"},
 "film:What If...": {"tmdb": "movie/172499", "why": "греческий «Αν...» 2012 Папакалиатиса (Греция и Кипр 10–11.2024); не «What If» 2014 с Рэдклиффом"},
-"tv:The Club": {"tmdb": "tv/136125", "why": "турецкий «Kulüp» 2021; El club из What We Watched — мексиканский тёзка (r3 §4.4)"}
+"tv:The Club": {"tmdb": "tv/136125", "why": "турецкий «Kulüp» 2021; El club из What We Watched — мексиканский тёзка (r3 §4.4)"},
+"tv:Til Money Do Us Part": {"tmdb": "tv/196614", "why": "колумбийский «Hasta que la plata nos separe» 2022 (RCN; мир 23.10.2022, №1 Латинской Америки); английского названия в TMDB нет, поиск не находит"}
 }
