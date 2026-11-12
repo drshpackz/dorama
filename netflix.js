@@ -1351,16 +1351,20 @@
     return val ? s + ' · ' + val : s;
   }
   // Мировой топ-10 недели W (§5.2, ряды 1–2). С подбором o позиции фильтруются, номера остаются.
-  function worldTop(W, kind, o) {
+  // all — не только слитая десятка: и остальные позиции списков недели (с 11-го места слитого топа — бейдж
+  // своего списка «Фильмы · не англ. №4», настоящий номер). Так История топа с подбором показывает каждую
+  // неделю, которую «Выбрать неделю…» считает непустой, со всеми её тайтлами.
+  function worldTop(W, kind, o, all) {
     var cats = chartCats(kind, o), list, prev, out = [], i, e, T;
     if (!cats.length) return out;
     list = mergedWeek(W, cats);
     prev = hasWeek(W - 1) ? rankMap(mergedWeek(W - 1, cats)) : null;
-    for (i = 0; i < list.length && i < 10; i++) {
+    for (i = 0; i < list.length && (all || i < 10); i++) {
       e = list[i]; T = D.T[owner(e.sid)];
       if (!T || (o && !passFacets(T, o, '', true))) continue;
-      out.push(makeCard(T, e.sid, { rank: e.rank, mv: moveOf(prev, moveKey(e.sid), e.rank, e.cw === 1),
-        wk: W, cat: e.cat, pl: e.pl, cw: e.cw, h: e.h, v: e.v, tp: seasonShort(slabel(e.sid)), age: chartAge(e) }));
+      out.push(makeCard(T, e.sid, i < 10 ? { rank: e.rank, mv: moveOf(prev, moveKey(e.sid), e.rank, e.cw === 1),
+        wk: W, cat: e.cat, pl: e.pl, cw: e.cw, h: e.h, v: e.v, tp: seasonShort(slabel(e.sid)), age: chartAge(e) }
+        : { meta: LIST_BADGE[e.cat] + ' №' + e.pl, wk: W, cat: e.cat, pl: e.pl, cw: e.cw, h: e.h, v: e.v, tp: seasonShort(slabel(e.sid)), age: chartAge(e) }));
     }
     return out;
   }
@@ -3732,10 +3736,12 @@
   // Ряды недели W: мир — слитые десятки с движением или один список Netflix, страна — её два списка.
   // Подбор фильтрует позиции по тайтлу, настоящие номера остаются; хвост мирового ряда — «Все 40 →»:
   // из ряда фильмов — сетка wk<W>f, где фильмы первыми.
+  // Подбор по тайтлу (жанр, откуда, год выхода): ряд мира — все позиции недели этого вида, не только слитая
+  // десятка, иначе недели с результатом в «Выбрать неделю…» пропадали из ленты.
   function weekRows(o, W) {
-    var rows = [], C = o.c ? D.cty[o.c] : null, kind, cards, n;
+    var rows = [], C = o.c ? D.cty[o.c] : null, all = !!(o.g.length || o.o || o.r), kind, cards, n;
     for (kind = 1; kind >= 0; kind--) {
-      cards = C ? countryTop(C, W, kind, o) : worldTop(W, kind, o);
+      cards = C ? countryTop(C, W, kind, o) : worldTop(W, kind, o, all);
       if (!cards.length) continue;
       if (!C && hasScreen('netflix_grid') && (n = weekAllCount(o, W)) > cards.length) cards.push(tailTile('Все ' + n + ' →', '', { act: 'grid', list: 'wk' + W + (kind ? '' : 'f'), n: n }));
       rows.push(cardRow(weekLabel(W) + ' · ' + weekKindTitle(kind, o), cards, { line_type: 'nf-top', nf_wk: W }));
