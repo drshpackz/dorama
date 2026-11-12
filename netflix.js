@@ -3174,9 +3174,9 @@
       if (!L.s && (d.s || '') !== (orig.s || '')) storageSet('netflix_sort', d.s || '');
       applyNf(d, { from: from });
     }
+    // «Уточнить» стоит под разделами, над «Сбросить всё»: разделы всегда в одних и тех же строках (§6.3, §6.4).
     items = [{ title: 'Показать ' + fmtInt(n), show: true, ghost: !n, noenter: !n }];
     refine = refineItems(draft, L, wc >= 0);
-    if (refine.length) items = items.concat([{ title: 'Уточнить', separator: true }], refine, [{ title: 'Фильтры', separator: true }]);
     items = items.concat([
       sec('c', 'Чарт', draft.c ? countryName(draft.c) : 'весь мир'),
       sec('t', 'Тип', draft.t ? TYPE[draft.t].title : 'фильмы и сериалы'),
@@ -3186,10 +3186,10 @@
       sec('p', 'Год в топе', periodText(draft) || (wc >= 0 ? weekLabel(wc, { short: true }) : 'всё время')),
       sec('r', 'Год выхода', draft.r ? RELEASE[draft.r].title : 'любой'),
       sec('s', 'Сортировка', SORT[effSort(draft)].title.toLowerCase()),
-      { title: 'Прямые эфиры', subtitle: 'WWE, бокс, NFL в списках тайтлов', checkbox: true, checked: !!draft.lv, lvbox: true },
-      { title: '', separator: true },
-      { title: 'Сбросить всё', reset: true }
+      { title: 'Прямые эфиры', subtitle: 'WWE, бокс, NFL в списках тайтлов', checkbox: true, checked: !!draft.lv, lvbox: true }
     ]);
+    if (refine.length) items = items.concat([{ title: 'Уточнить', separator: true }], refine);
+    items = items.concat([{ title: '', separator: true }, { title: 'Сбросить всё', reset: true }]);
     Lampa.Select.show({
       title: 'Подбор · найдено ' + fmtInt(n), items: items,
       onDraw: function (item, el) { if (el.show) showEl = item; },
