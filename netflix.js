@@ -4283,15 +4283,19 @@
     T.trRe = 1;
     findTrailer(T, function () { if (done) done(true); });
   }
+  // Один раз на оверлей. Поиск мог уже пройти (его запустила ошибка русского ключа, и он ответил раньше, чем
+  // упал английский): тогда trRefind ничего не ищет, а свежие ключи уже в T.tr — их и играем (trailerKeys
+  // пропускает TR_DEAD, так что мёртвые не вернутся).
   function trRetry(S, it, code) {
-    if (!TR_GONE[code]) { trGone(code); return; }
+    if (!TR_GONE[code] || S.retried) { trGone(code); return; }
+    S.retried = 1;
     S.note = 'Ролик недоступен — ищу другой…';
     trDraw();
     trWake(true);
-    trRefind(it, function (ran) {
+    trRefind(it, function () {
       var keys;
       if (TR !== S) return;
-      keys = ran ? trailerList(it.T, it.lang) : [];
+      keys = trailerList(it.T, it.lang);
       if (!keys.length) { trGone(code); return; }
       it.keys = keys;
       S.note = 'Загрузка…';
