@@ -2560,9 +2560,10 @@
     if (d.act === 'chartMenu') return ['Все страны', (cc ? 'Чарты ' + cc + ' ' + plural(cc, 'страны', 'стран', 'стран') + ' по регионам · ' : '') + 'OK — выбрать страну'];
     if (d.act === 'countdown') return ['Отсчёт 10→1', (d.sub ? d.sub + ' подряд, ' : '') + 'с 10-го места до 1-го · OK — смотреть'];
     if (d.act === 'grid') {
-      m = /^wk(\d+)$/.exec(d.list || '');
-      return [d.gtitle || d.title || (m ? 'Неделя ' + weekLabel(+m[1]) : 'Весь список'), (d.tile === 'tail' && d.sub ? d.sub + ' · ' : '') +
-        (m ? 'все позиции четырёх списков Netflix' : 'весь список сеткой') + ' · OK — открыть'];
+      // Неделя мира (wk<W>, wk<W>f из ряда фильмов): имя сетки, которую откроет OK, и сколько в ней позиций.
+      m = /^wk(\d+)f?$/.exec(d.list || '');
+      if (m) return [gridTitle(currentNf(), d.list) || 'Неделя ' + weekLabel(+m[1]), (d.n ? d.n + ' ' + plural(d.n, 'позиция', 'позиции', 'позиций') + ' сеткой' : 'все позиции недели сеткой') + ' · OK — открыть'];
+      return [d.gtitle || d.title || 'Весь список', (d.tile === 'tail' && d.sub ? d.sub + ' · ' : '') + 'весь список сеткой · OK — открыть'];
     }
     if (d.act === 'random') return [d.title, 'тайтл этого подбора наугад: трейлер, если есть, иначе страница · OK — новый бросок'];
     if (d.act === 'filters') return [d.title, 'тип, жанр, страна, год · OK — все фильтры в одном меню'];
@@ -3543,7 +3544,7 @@
     for (kind = 1; kind >= 0; kind--) {
       cards = C ? countryTop(C, W, kind, o) : worldTop(W, kind, o);
       if (!cards.length) continue;
-      if (!C && hasScreen('netflix_grid') && (n = weekAllCount(o, W)) > cards.length) cards.push(tailTile('Все ' + n + ' →', '', { act: 'grid', list: 'wk' + W + (kind ? '' : 'f') }));
+      if (!C && hasScreen('netflix_grid') && (n = weekAllCount(o, W)) > cards.length) cards.push(tailTile('Все ' + n + ' →', '', { act: 'grid', list: 'wk' + W + (kind ? '' : 'f'), n: n }));
       rows.push(cardRow(weekLabel(W) + ' · ' + weekKindTitle(kind, o), cards, { line_type: 'nf-top', nf_wk: W }));
     }
     return rows;
