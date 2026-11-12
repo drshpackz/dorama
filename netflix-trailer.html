@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Netflix Топ-10 · трейлер</title>
+  <style>
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+    #player { position: absolute; left: 0; top: 0; width: 100%; height: 100%; border: 0; }
+  </style>
+</head>
+<body>
+  <div id="player"></div>
+  <script>
+  (function () {
+    'use strict';
+
+    // Мост трейлеров netflix.js (спека §8.4). Своя копия идеи youtube.html Lampa: тот мост не передаёт
+    // YouTube cc_load_policy, cc_lang_pref и hl, а без них русские субтитры сами не включаются.
+    // Адрес: netflix-trailer.html?id=<bridgeId>&list=<пункты>&i=<с какого начать>.
+    // list — пункты через запятую, пункт — ключи YouTube через «~» в порядке попытки: RU, при ошибке — EN.
+    // Сообщения родителю: {nf:id, ev:'bridge'|'ready'|'item'|'state'|'captions'|'error'|'end', …}.
+    // Команды от родителя: {nf:id, cmd:'toggle'|'play'|'pause'|'next'|'prev'|'destroy'}, {nf:id, cmd:'seek', by:±10}.
+
+    var KEY = /^[A-Za-z0-9_-]{11}$/;
+    var NEXT_AFTER_FATAL = 1500;   // мс до следующего пункта после ролика, который не играет никаким ключом
+    var CAP_WAIT = 1500;           // мс после начала игры до проверки субтитров
+    var CAP_TRIES = 6;             // повторы раз в секунду, пока у плеера нет списка дорожек
+
+    function param(name) {
+      var m = new RegExp('[?&]' + name + '=([^&#]*)').exec(location.search || '');
+      if (!m) return '';
+      try { return decodeURIComponent(m[1].replace(/\+/g, ' ')); } catch (e) { return m[1]; }
+    }
+    // Пустой пункт остаётся на своём месте: номера пунктов у моста и у плагина совпадают.
+    function parseList(s) {
+      var out = [], parts = String(s || '').split(','), i, j, keys, k;
+      for (i = 0; i < parts.length; i++) {
+        keys = []; k = parts[i].split('~');
+        for (j = 0; j < k.length; j++) if (KEY.test(k[j])) keys.push(k[j]);
+        out.push(keys);
+      }
+      return out;
+    }
+    function origin() { return location.origin || (location.protocol + '//' + location.host); }
+    function has(list, name) { var i; for (i = 0; i < (list || []).length; i++) if (list[i] === name) return true; return false; }
+
+    var id = param('id');
+    var items = parseList(param('list'));
+    var idx = Math.max(0, Math.min(items.length - 1, parseInt(param('i'), 10) || 0));
+    var kidx = 0;          // какой ключ пункта сейчас играет
+    var vid = 0;           // номер загрузки: старые таймеры чужого ролика ничего не делают
+    var player = null, ready = false, done = false;
+    var capMode = '', capTimer = null, skipTimer = null;
+
+    function send(ev, data) {
+      var msg = { nf: id, ev: ev }, k;
+      if (data) for (k in data) if (data.hasOwnProperty(k)) msg[k] = data[k];
+      try { if (window.parent && window.parent !== window) window.parent.postMessage(msg, '*'); } catch (e) {}
+    }
+    function key() { return (items[idx] || [])[kidx] || ''; }
+
+    // Новый ролик: пункт idx, ключ kidx.
+    function load() {
+      var k = key();
+      vid++; capMode = '';
+      clearTimeout(capTimer); capTimer = null;
+      clearTimeout(skipTimer); skipTimer = null;
+      if (!k) { fail(0); return; }
+      send('item', { i: idx, key: k });
+      try { player.loadVideoById(k); } catch (e) { fail(-1); }
+    }
+    function go(i) {
+      if (done) return;
+      clearTimeout(skipTimer); skipTimer = null;
+      if (i >= items.length) { finish(); return; }
+      idx = Math.max(0, i); kidx = 0;
+      load();
+    }
+    function finish() {
+      done = true; vid++;
+      clearTimeout(capTimer); clearTimeout(skipTimer);
+      try { player.stopVideo(); } catch (e) {}
+      send('end');
+    }
+    // Ошибка ролика (коды 2, 5, 100, 101, 150; 153 не проверен): следующий ключ пункта. Ключей нет —
+    // error fatal, через 1,5 с следующий пункт, а после последнего — end.
+    function fail(code) {
+      var my;
+      if (kidx + 1 < (items[idx] || []).length) {
+        send('error', { i: idx, code: code, fatal: false });
+        kidx++;
+        load();
+        return;
+      }
+      send('error', { i: idx, code: code, fatal: true });
+      my = vid;
+      skipTimer = setTimeout(function () { if (my === vid) go(idx + 1); }, NEXT_AFTER_FATAL);
+    }
+
+    // Русские субтитры — попытка, не проверено (§8.4). getOption('captions', 'tracklist') и
+    // setOption('captions', 'track', …) в документации IFrame API не описаны: не сработают — ничего не сломается.
+    // Режим: ru — есть русская дорожка; auto — попросили автоперевод другой дорожки на русский;
+    // none — дорожек нет; unknown — плеер не дал прочитать список.
+    function captions(my, tries) {
+      var list = [], i, ru = null, mode;
+      capTimer = null;
+      if (my !== vid || !player || done) return;
+      try {
+        if (has(player.getOptions(), 'captions')) list = player.getOption('captions', 'tracklist');
+        if (Object.prototype.toString.call(list) !== '[object Array]') list = [];
+      } catch (e) {
+        report('unknown');
+        return;
+      }
+      // Модуль субтитров грузится не сразу: пустой список проверяем ещё несколько раз.
+      if (!list.length && tries < CAP_TRIES) {
+        capTimer = setTimeout(function () { captions(my, tries + 1); }, 1000);
+        return;
+      }
+      for (i = 0; i < list.length; i++) {
+        if (String(list[i].languageCode || '').toLowerCase().indexOf('ru') === 0) { ru = list[i]; break; }
+      }
+      if (ru) {
+        // cc_lang_pref=ru, скорее всего, уже включил её; выбор дорожки — на случай, если нет.
+        mode = 'ru';
+        try { player.setOption('captions', 'track', { languageCode: ru.languageCode }); } catch (e) {}
+      } else if (list.length) {
+        try {
+          player.setOption('captions', 'track', { languageCode: source(list).languageCode, translationLanguage: { languageCode: 'ru' } });
+          mode = 'auto';
+        } catch (e) { mode = 'none'; }
+      } else mode = 'none';
+      report(mode);
+    }
+    function report(mode) { capMode = mode; send('captions', { mode: mode }); }
+    // Дорожка для автоперевода: ручная лучше автоматической (asr), английская лучше прочих.
+    function source(list) {
+      var best = list[0], bs = -1, i, t, s;
+      for (i = 0; i < list.length; i++) {
+        t = list[i];
+        s = (t.kind === 'asr' ? 0 : 2) + (String(t.languageCode || '').toLowerCase().indexOf('en') === 0 ? 1 : 0);
+        if (s > bs) { bs = s; best = t; }
+      }
+      return best;
+    }
+    // Проверка один раз на ролик; модуль субтитров, загруженный позже ответа none, — повод проверить снова.
+    function checkCaptions(delay, late) {
+      var my = vid;
+      if (done || (capMode && !(late && capMode === 'none'))) return;
+      clearTimeout(capTimer);
+      capTimer = setTimeout(function () { captions(my, 0); }, delay);
+    }
+
+    function destroy() {
+      done = true; vid++;
+      clearTimeout(capTimer); clearTimeout(skipTimer);
+      try { if (player) player.destroy(); } catch (e) {}
+      player = null; ready = false;
+    }
+
+    window.addEventListener('message', function (e) {
+      var d = e && e.data, s;
+      if (!d || typeof d !== 'object' || d.nf !== id || !d.cmd) return;
+      if (d.cmd === 'destroy') { destroy(); return; }
+      if (!player || !ready || done) return;
+      try {
+        if (d.cmd === 'toggle') {
+          s = player.getPlayerState();
+          if (s === 1 || s === 3) player.pauseVideo(); else player.playVideo();
+        }
+        else if (d.cmd === 'play') player.playVideo();
+        else if (d.cmd === 'pause') player.pauseVideo();
+        else if (d.cmd === 'next') go(idx + 1);
+        else if (d.cmd === 'prev') go(idx - 1);
+        else if (d.cmd === 'seek') player.seekTo(Math.max(0, (player.getCurrentTime() || 0) + (+d.by || 0)), true);
+      } catch (ex) {}
+    });
+
+    window.onYouTubeIframeAPIReady = function () {
+      var first = key();
+      if (done) return;
+      player = new YT.Player('player', {
+        width: '100%',
+        height: '100%',
+        videoId: first,
+        playerVars: {
+          autoplay: 1, controls: 0, cc_load_policy: 1, cc_lang_pref: 'ru', hl: 'ru', rel: 0, playsinline: 1,
+          modestbranding: 1, iv_load_policy: 3, fs: 0, enablejsapi: 1, origin: origin()
+        },
+        events: {
+          onReady: function () {
+            if (done) return;
+            ready = true;
+            send('ready');
+            if (first) send('item', { i: idx, key: first });
+            else fail(0);
+          },
+          onStateChange: function (e) {
+            var s = e ? e.data : -1;
+            if (done) return;
+            send('state', { s: s });
+            if (s === 1) checkCaptions(CAP_WAIT);
+            else if (s === 0) go(idx + 1);     // конец ролика — следующий пункт
+          },
+          onError: function (e) { if (!done) fail(e ? e.data : -1); },
+          // Модуль субтитров загрузился (или сменился): проверить дорожки сразу.
+          onApiChange: function () { checkCaptions(0, true); }
+        }
+      });
+    };
+
+    send('bridge');
+  })();
+  </script>
+  <script src="https://www.youtube.com/iframe_api"></script>
+</body>
+</html>

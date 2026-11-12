@@ -1,0 +1,8 @@
+{
+"_how": "Ручные правки конвейера (README.md, раздел «Правки»). Ключ — ключ тайтла: tv:<show_title> или film:<show_title>, у тёзок — с #. Операции: tmdb \"tv/<id>\" | \"movie/<id>\" | null; hide true; split [{countries, from, to, tmdb, ru, tr, lv, hide}, …, {последняя часть — всё остальное, ключ остаётся}]; merge \"<ключ>\" | false; ru \"<своё русское название>\"; tr \"ru:T:<ключ YouTube> en:T:<ключ>\" | \"\"; lv 1 | 0; why — заметка.",
+"film:Face to Face": {"tmdb": "movie/1146759", "why": "египетский «وش في وش» 2023, восемь арабских стран 2024; не Бергман 1976 (r3 §4.4)"},
+"film:Midnight Sun": {"split": [{"countries": ["KR"], "from": "2025-01-01", "tmdb": null}, {"tmdb": "movie/419478"}], "why": "Корея 2025 — другой фильм, оригинальное название уводило к мюзиклу «태양의 노래»; остальное — Midnight Sun 2018 (r3 §4.4)"},
+"film:The King": {"split": [{"countries": ["KR"], "tmdb": "movie/434724"}, {"tmdb": "movie/504949"}], "why": "Корея 2023 — «더 킹» 2017; Россия 2021 и Швеция — The King 2019 Netflix (r3 §4.4)"},
+"film:The Rise of Igbinogun": {"hide": true, "why": "Нигерия 2023, в TMDB не найден (r3 §4.4)"},
+"tv:The Club": {"tmdb": "tv/136125", "why": "турецкий «Kulüp» 2021; El club из What We Watched — мексиканский тёзка (r3 §4.4)"}
+}

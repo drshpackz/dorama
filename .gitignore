@@ -1,1 +1,4 @@
 node_modules/
+# netflix: downloaded Netflix files (tools/netflix/fetch.sh, fetch_www.py)
+.nf/
+__pycache__/
