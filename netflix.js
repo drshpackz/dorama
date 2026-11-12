@@ -2204,21 +2204,37 @@
   // «Подборок». Первый — «↩ Прошлый подбор»: netflix_filter, его пишет remember(). За ними, пока их меньше
   // SHELF_MAX, — «Свой подбор», он открывает «Фильтры». Ряд строится один раз: при возврате на «Мир»
   // плитки переписываются на месте (refreshShelf; новый подбор занимает место «Своего подбора» или
-  // вытесняет самый старый), и OK применяет ровно то, что на плитке.
+  // вытесняет самый старый), и OK применяет ровно то, что на плитке. Один подбор — одна плитка: тот же
+  // подбор с другой сортировкой вытесняет прежний, а шаги одной цепочки уточнений (replace на экране
+  // подбора, сортировка в шапке) не копятся — applyNf убирает шаг, который сам и записал (nf_hnew).
   var SHELF_MAX = 5;
+  function histKey(nf) { return buildNf(withNf(parseNf(nf), 's', '')); }
+  function histRaw() {
+    var a = storageGet('netflix_filter_hist', '[]');
+    return Object.prototype.toString.call(a) === '[object Array]' ? a : [];
+  }
   function filterHist() {
-    var a = storageGet('netflix_filter_hist', '[]'), last = String(storageGet('netflix_filter', '') || ''), out = [], i;
-    if (Object.prototype.toString.call(a) !== '[object Array]') a = [];
-    if (last && nfMode(parseNf(last)) !== 'world') out.push(buildNf(parseNf(last)));
-    for (i = 0; i < a.length && out.length < SHELF_MAX; i++) if (typeof a[i] === 'string' && a[i] && out.indexOf(a[i]) < 0) out.push(a[i]);
+    var a = histRaw(), last = String(storageGet('netflix_filter', '') || ''), out = [], keys = [], i;
+    function add(nf) { var k = histKey(nf); if (keys.indexOf(k) < 0) { keys.push(k); out.push(nf); } }
+    if (last && nfMode(parseNf(last)) !== 'world') add(buildNf(parseNf(last)));
+    for (i = 0; i < a.length && out.length < SHELF_MAX; i++) if (typeof a[i] === 'string' && a[i]) add(a[i]);
     return out;
   }
-  // Подбор показан (экран netflix не в виде «Мир») — он первый в истории.
+  // Подбор показан (экран netflix не в виде «Мир») — он первый в истории. true — его там не было (с любой
+  // сортировкой): записал его этот экран.
   function addFilterHist(canon) {
-    var a = filterHist(), i = a.indexOf(canon);
-    if (i >= 0) a.splice(i, 1);
+    var a = filterHist(), raw = histRaw(), key = histKey(canon), had = false, i;
+    for (i = 0; i < raw.length; i++) if (typeof raw[i] === 'string' && raw[i] && histKey(raw[i]) === key) had = true;
+    for (i = a.length - 1; i >= 0; i--) if (histKey(a[i]) === key) a.splice(i, 1);
     a.unshift(canon);
     storageSet('netflix_filter_hist', a.slice(0, SHELF_MAX));
+    return !had;
+  }
+  // Промежуточный шаг цепочки уточнений уходит из истории (applyNf перед replace).
+  function dropFilterHist(canon) {
+    var a = histRaw(), out = [], i;
+    for (i = 0; i < a.length; i++) if (a[i] !== canon) out.push(a[i]);
+    if (out.length !== a.length) storageSet('netflix_filter_hist', out);
   }
   function shelfTile(nf, k, d) {
     var o = nf ? parseNf(nf) : null, by = o && o.s && SORT[o.s] ? ' · ' + SORT[o.s].by : '';
@@ -3502,6 +3518,8 @@
           return;
         }
       }
+      // Шаг цепочки уточнений, который этот экран сам записал в «Мои подборы», уступает место итогу.
+      if (cur.nf_hnew && useful(o)) dropFilterHist(cur.nf || '');
       Lampa.Activity.replace(obj);
     }, opts);
   }
@@ -3556,8 +3574,9 @@
     firstHint();
   }
   // Плитка, переписанная на месте, и её прежнее содержимое: страна или подбор. Фокус — на плитку с тем же
-  // содержимым; на полке «Мои подборы» без такой — на первую: там подбор, с которого вернулись.
-  function tileKey(d) { return d.tile === 'country' ? 'c:' + d.code : d.act + ':' + (d.nf || ''); }
+  // содержимым; на полке «Мои подборы» без такой — на первую: там подбор, с которого вернулись. Сортировка
+  // подбор не меняет: «Аниме · по часам» на полке — та же плитка, что «Аниме» (histKey).
+  function tileKey(d) { return d.tile === 'country' ? 'c:' + d.code : d.act + ':' + (d.act === 'nf' ? histKey(d.nf || '') : d.nf || ''); }
   function refocusTile(row, key) {
     var list = row ? row.results : [], i, k = -1, el;
     for (i = 0; i < list.length && k < 0; i++) if (list[i].__tile && tileKey(list[i]) === key) k = i;
@@ -3613,6 +3632,7 @@
     var inherited = comp.destroy ? comp.destroy.bind(comp) : function () {}, started = comp.start.bind(comp), build0 = comp.build;
     var built = false, pending = false, noteLater = false, failed = false, failNoted = false, shelf = null, ccRow = null, seen = null;
 
+    object.nf_hnew = false;   // addFilterHist впервые записал подбор экрана в «Мои подборы» — applyNf уберёт его, заменяя экран
     loadAtEnd(comp, function () { return dead; });
     // Короткий экран (фишки и один ряд «Старое кино в топе») не даёт прокрутке поднять ряд 1 к шапке: она
     // упирается в высоту содержимого, и фишки остаются наполовину под шапкой. Тело скролла — не ниже экрана
@@ -3639,7 +3659,7 @@
             var rows, i, own;
             if (dead) return;
             try { rows = plan.first(o); } catch (e) { log('build', e && e.stack); self.nfState('build', ''); return; }
-            if (useful(o)) addFilterHist(buildNf(o));   // «Мои подборы» (§5.2.1): только подбор с результатами
+            if (useful(o)) object.nf_hnew = addFilterHist(buildNf(o));   // «Мои подборы» (§5.2.1): только подбор с результатами
             if (rows[0] && rows[0].line_type === 'nf-chips') chips = rows[0];
             for (i = 0; i < rows.length; i++) {
               if (rows[i].nf_shelf) shelf = rows[i];
