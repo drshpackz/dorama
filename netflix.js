@@ -2991,7 +2991,7 @@
       L.c = 'в Зале славы — только мировой чарт'; L.p = 'в Зале славы — всё время'; L.s = 'у списков Зала славы свой порядок';
     } else if (comp === 'netflix_grid' && key === 'at') {
       L.c = 'рейтинг Netflix — только мировой'; L.p = 'рейтинг — за 91 день'; L.s = 'у рейтинга свой порядок';
-    } else if (comp === 'netflix_grid' && /^wk\d+$/.test(key)) {
+    } else if (comp === 'netflix_grid' && /^wk\d+f?$/.test(key)) {
       L.p = 'неделя задана списком'; L.s = 'у чарта недели свой порядок';
     } else if (comp === 'netflix_grid' && key === 'lg') L.s = 'у легенд свой порядок';
     else if (comp === 'netflix_weeks') L.s = 'История держит порядок чарта';
