@@ -2275,15 +2275,18 @@
   // Тайтл — только в одной плитке: если он уже стоит в ряду, плитку берёт следующий в списке (иначе
   // «Игра в кальмара» заняла бы четыре плитки из восьми). Такая плитка честно называет своё место
   // («№3 · 411,3 млн ч») и держателя рекорда — его первой показывает сетка списка, которую открывает OK.
+  // Место — по рекорду, как его видно на бейдже: равные делят место, и равный первому не «2-е», а делит
+  // рекорд (Red Notice и «Игра в кальмара» — оба №1 в 94 странах).
   function recordsRow(title, o) {
-    var items = [], used = {}, i, j, key, list;
+    var items = [], used = {}, i, j, k, key, list, place;
     for (i = 0; i < HALL_HOME.length; i++) {
       key = HALL_HOME[i];
       list = hallFiltered(key, o);
       for (j = 0; j < list.length; j++) {
         if (used[list[j].n]) continue;
         used[list[j].n] = true;
-        items.push(hallCard(key, list[j], true, j ? { place: j + 1, top: list[0] } : null));
+        for (place = 1, k = 0; k < j; k++) if (list[k].badge !== list[j].badge) place++;
+        items.push(hallCard(key, list[j], true, j ? { place: place, top: list[0] } : null));
         break;
       }
     }
@@ -2297,12 +2300,15 @@
   function hallCard(key, e, tile, below) {
     var x = { meta: e.badge, wk: e.W >= 0 ? e.W : null, tp: e.sid != null ? seasonShort(slabel(e.sid)) : '', age: hallMoment(key, e) }, s0;
     x[tile ? 'rec' : 'hk'] = key;
-    // Плитка не с первого места: бейдж с местом, в строке фокуса — чей рекорд (cardInfo).
+    // Плитка не с первого места: бейдж с местом, в строке фокуса — чей рекорд (cardInfo). Равный первому
+    // места не пишет: бейдж — свой рекорд, в строке фокуса — с кем он его делит (rtie).
     if (below) {
       s0 = below.top.sid != null ? seasonShort(slabel(below.top.sid)) : '';
       // «№3 · 411,3 млн ч»; бейдж со своим «№» — «2-е · №1 в 94», а не «№2 · №1 в 94».
-      x.meta = (/^№/.test(e.badge) ? below.place + '-е · ' : '№' + below.place + ' · ') + e.badge;
-      x.rp = below.place;
+      if (below.place > 1) {
+        x.meta = (/^№/.test(e.badge) ? below.place + '-е · ' : '№' + below.place + ' · ') + e.badge;
+        x.rp = below.place;
+      } else x.rtie = 1;
       x.rtop = titleName(D.T[below.top.n]) + (s0 ? ' ' + s0 : '') + ', ' + below.top.badge;
     }
     return makeCard(D.T[e.n], e.sid, x);
@@ -2761,7 +2767,7 @@
       if (nf.rp) x = x.replace(/^(?:№\d+|\d+-е) · /, '');
       parts.push(HALL_T[hk].title + (nf.rp ? ' · ' + nf.rp + '-е место' : '') + ': ' + (/подряд/.test(HALL_T[hk].title) ? x.replace(/\s*подряд$/, '') : x));
       if (nf.age) parts.push(nf.age);
-      if (nf.rtop) parts.push('рекорд — ' + nf.rtop);
+      if (nf.rtop) parts.push((nf.rtie ? 'делит рекорд — ' : 'рекорд — ') + nf.rtop);
     } else if (nf.pl && nf.cat != null) parts.push('№' + nf.pl + ' ' + LIST_GEN[nf.cat]);
     else if (nf.cpl && nf.cc) parts.push('№' + nf.cpl + ' ' + countryPrep(nf.cc));
     else if (/^91 день · /.test(nf.age || '')) {
