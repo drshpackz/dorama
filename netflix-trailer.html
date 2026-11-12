@@ -9,30 +9,54 @@
     html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
     #player { position: absolute; left: 0; top: 0; width: 100%; height: 100%; border: 0; }
     /* Покрывало над плеером (trailers-10). YouTube при каждом пуске, перемотке и продолжении сам рисует на ~4 с
-       строку названия сверху, ⏸ в центре, «Поделиться» слева внизу и «Другие видео» с логотипом справа внизу;
-       controls=0 и другие playerVars их не убирают (замер 12.11.2026). Размеры у YouTube в пикселях, не в долях
-       кадра: так и закрываем. full — чёрный кадр до первой картинки ролика, потом плавное появление. */
+       строку названия сверху (52 px), ⏸ в центре (круг 56 px), «Поделиться» слева внизу (круг 40 px в 38 px от
+       левого края и 16 px от нижнего) и «Другие видео» с логотипом справа внизу (328×48 px в 30 px от правого края
+       и 12 px от нижнего, надпись — с 12 px от его левого края); controls=0 и другие playerVars их не убирают.
+       Размеры и отступы у YouTube в пикселях при любом размере плеера (замер 12.11.2026: 960×540, 1280×720,
+       1920×1080), поэтому закрываем ровно эти места и не шире: субтитры рядом остаются видны, под покрывало уходит
+       только то, что закрывал сам YouTube. Значки в кругах — матовым стеклом (размытие), а не чёрным диском,
+       который виден на светлом кадре; без backdrop-filter (старые ТВ) — тёмным пятном размером со значок. full —
+       чёрный кадр до первой картинки ролика, потом плавное появление. */
     #veil { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; opacity: 0; background-color: rgba(0,0,0,0);
       -webkit-transition: opacity .5s, background-color .3s; transition: opacity .5s, background-color .3s; }
     #veil.on { opacity: 1; -webkit-transition: background-color .3s; transition: background-color .3s; }
     #veil.full { background-color: #000; }
     #veil i { position: absolute; display: block; }
-    #veil .vt { left: 0; right: 0; top: 0; height: 100px;
-      background: -webkit-linear-gradient(top, #000 58%, rgba(0,0,0,0) 100%); background: linear-gradient(to bottom, #000 58%, rgba(0,0,0,0) 100%); }
-    #veil .vm { left: 50%; top: 50%; width: 76px; height: 76px; margin: -38px 0 0 -38px;
-      background: -webkit-radial-gradient(50% 50%, 38px 38px, #000 48%, rgba(0,0,0,.75) 62%, rgba(0,0,0,.35) 80%, rgba(0,0,0,0) 100%);
-      background: radial-gradient(38px 38px at 50% 50%, #000 48%, rgba(0,0,0,.75) 62%, rgba(0,0,0,.35) 80%, rgba(0,0,0,0) 100%); }
-    #veil .vl { left: 0; bottom: 0; width: 160px; height: 116px;
-      background: -webkit-radial-gradient(0 100%, 160px 116px, #000 69%, rgba(0,0,0,0) 100%);
-      background: radial-gradient(160px 116px at 0 100%, #000 69%, rgba(0,0,0,0) 100%); }
-    #veil .vr { right: 0; bottom: 0; width: 580px; height: 150px;
-      background: -webkit-radial-gradient(100% 100%, 580px 150px, #000 72%, rgba(0,0,0,0) 100%);
-      background: radial-gradient(580px 150px at 100% 100%, #000 72%, rgba(0,0,0,0) 100%); }
+    #veil .vt { left: 0; right: 0; top: 0; height: 72px;
+      background: -webkit-linear-gradient(top, #000 72%, rgba(0,0,0,0) 100%); background: linear-gradient(to bottom, #000 72%, rgba(0,0,0,0) 100%); }
+    #veil .vm, #veil .vl { border-radius: 50%; }
+    #veil .vm { left: 50%; top: 50%; width: 168px; height: 168px; margin: -84px 0 0 -84px;
+      background: -webkit-radial-gradient(50% 50%, closest-side, rgba(0,0,0,.85) 24%, rgba(0,0,0,0) 40%);
+      background: radial-gradient(closest-side at 50% 50%, rgba(0,0,0,.85) 24%, rgba(0,0,0,0) 40%); }
+    #veil .vl { left: 10px; bottom: -12px; width: 96px; height: 96px;
+      background: -webkit-radial-gradient(50% 50%, closest-side, rgba(0,0,0,.85) 29%, rgba(0,0,0,0) 50%);
+      background: radial-gradient(closest-side at 50% 50%, rgba(0,0,0,.85) 29%, rgba(0,0,0,0) 50%); }
+    #veil .vr { right: 30px; bottom: 12px; width: 320px; height: 48px; border-radius: 12px; background: #000;
+      -webkit-box-shadow: 0 0 6px 2px #000; box-shadow: 0 0 6px 2px #000; }
+    /* Матовое стекло втрое шире значка с размытым краем: белый значок и тёмный круг YouTube расходятся по нему
+       слабой дымкой, а не лежат тёмным диском (у узкого стекла дымка от белого значка видна на тёмном кадре). */
+    @supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+      #veil .vm, #veil .vl { background: none;
+        -webkit-mask-image: -webkit-radial-gradient(50% 50%, closest-side, #000 40%, rgba(0,0,0,0) 100%);
+        -webkit-mask-image: radial-gradient(closest-side at 50% 50%, #000 40%, rgba(0,0,0,0) 100%);
+        mask-image: radial-gradient(closest-side at 50% 50%, #000 40%, rgba(0,0,0,0) 100%); }
+      #veil .vm { -webkit-backdrop-filter: blur(22px); backdrop-filter: blur(22px); }
+      #veil .vl { -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+    }
+    /* Уведомление YouTube о субтитрах («Английский (Соединённые Штаты)», «Для настройки нажмите на значок ⚙») —
+       окно субтитров сверху: в первые ~2 с ролика и после смены дорожки, концом под подписью плагина. Его место
+       растёт с плеером (низ — 20 % высоты и ещё 19–33 px), поэтому полоса — в долях. */
+    #capv { position: absolute; left: 0; right: 0; top: 0; height: 20%; height: -webkit-calc(20% + 34px); height: calc(20% + 34px);
+      background: #000; pointer-events: none; opacity: 0; -webkit-transition: opacity .5s; transition: opacity .5s; }
+    #capv:after { content: ''; position: absolute; left: 0; right: 0; top: 100%; height: 24px;
+      background: -webkit-linear-gradient(top, #000, rgba(0,0,0,0)); background: linear-gradient(to bottom, #000, rgba(0,0,0,0)); }
+    #capv.on { opacity: 1; -webkit-transition: none; transition: none; }
   </style>
 </head>
 <body>
   <div id="player"></div>
   <div id="veil" class="on full"><i class="vt"></i><i class="vm"></i><i class="vl"></i><i class="vr"></i></div>
+  <div id="capv"></div>
   <script>
   (function () {
     'use strict';
@@ -53,6 +77,7 @@
     var AD_POLL = 1000;            // мс между проверками рекламы YouTube
     var VEIL_HOLD = 4500;          // мс игры под покрывалом: свои кнопки YouTube гаснут к 4,1 с после state 1
     var VEIL_FULL = 6000;          // мс чёрного кадра без игры: дольше — пусть видно, что показывает YouTube
+    var VEIL_CAP = 3000;           // мс полосы над уведомлением о субтитрах: YouTube держит его ~2 с
 
     function param(name) {
       var m = new RegExp('[?&]' + name + '=([^&#]*)').exec(location.search || '');
@@ -84,6 +109,7 @@
     var player = null, ready = false, done = false, ad = false;
     var capMode = '', capTimer = null, skipTimer = null, adTimer = null;
     var veilEl = document.getElementById('veil'), veilTimer = null, started = false;
+    var capEl = document.getElementById('capv'), capVeilTimer = null;
     (function () { var a = param('nocc').split(','), i; for (i = 0; i < a.length; i++) if (KEY.test(a[i])) nocc[a[i]] = 1; })();
 
     function send(ev, data) {
@@ -105,13 +131,20 @@
     // По состоянию плеера: до первой игры ролика — full; буфер — on; игра — on ещё VEIL_HOLD; пауза — снять.
     function veilState(s) {
       if (ad) veil('');
-      else if (s === 1) { started = true; veil('play'); }
+      else if (s === 1) { if (!started) capVeil(VEIL_CAP); started = true; veil('play'); }
       else if (!started) veil('full');
       else if (s === 3) veil('on');
       else if (s === 2) veil('');
     }
     // Перемотка: YouTube показывает кнопки и без смены состояния.
     function veilSeek() { if (started && !ad) veil('play'); }
+    // Полоса над уведомлением YouTube о субтитрах: на ms (0 — снять). В рекламе — нет.
+    function capVeil(ms) {
+      clearTimeout(capVeilTimer); capVeilTimer = null;
+      if (!capEl) return;
+      capEl.className = ms && !ad ? 'on' : '';
+      if (ms && !ad) capVeilTimer = setTimeout(function () { capVeil(0); }, ms);
+    }
 
     // Новый ролик: пункт idx, ключ kidx. С hold — только загрузка, игра по команде play.
     function load() {
@@ -120,7 +153,7 @@
       clearTimeout(capTimer); capTimer = null;
       clearTimeout(skipTimer); skipTimer = null;
       ad = false;            // плагин сбрасывает рекламу сам по item
-      started = false; veil('full');
+      started = false; veil('full'); capVeil(0);
       if (!k) { fail(0); return; }
       send('item', { i: idx, key: k });
       try { if (hold) player.cueVideoById(k); else player.loadVideoById(k); } catch (e) { fail(-1); }
@@ -208,11 +241,12 @@
       if (ru) {
         // cc_lang_pref=ru, скорее всего, уже включил её; выбор дорожки — на случай, если нет.
         mode = 'ru';
-        try { player.setOption('captions', 'track', { languageCode: ru.languageCode }); } catch (e) {}
+        try { player.setOption('captions', 'track', { languageCode: ru.languageCode }); capVeil(VEIL_CAP); } catch (e) {}
       } else if (list.length) {
         try {
           // Без имени языка YouTube пишет в уведомлении «… >> undefined».
           player.setOption('captions', 'track', { languageCode: source(list).languageCode, translationLanguage: { languageCode: 'ru', languageName: 'Русский' } });
+          capVeil(VEIL_CAP);
           mode = 'auto';
         } catch (e) { mode = 'none'; }
       } else mode = 'none';
