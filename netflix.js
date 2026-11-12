@@ -2260,21 +2260,37 @@
   // «Подборок». Первый — «↩ Прошлый подбор»: netflix_filter, его пишет remember(). За ними, пока их меньше
   // SHELF_MAX, — «Свой подбор», он открывает «Фильтры». Ряд строится один раз: при возврате на «Мир»
   // плитки переписываются на месте (refreshShelf; новый подбор занимает место «Своего подбора» или
-  // вытесняет самый старый), и OK применяет ровно то, что на плитке.
+  // вытесняет самый старый), и OK применяет ровно то, что на плитке. Один подбор — одна плитка: тот же
+  // подбор с другой сортировкой вытесняет прежний, а шаги одной цепочки уточнений (replace на экране
+  // подбора, сортировка в шапке) не копятся — applyNf убирает шаг, который сам и записал (nf_hnew).
   var SHELF_MAX = 5;
+  function histKey(nf) { return buildNf(withNf(parseNf(nf), 's', '')); }
+  function histRaw() {
+    var a = storageGet('netflix_filter_hist', '[]');
+    return Object.prototype.toString.call(a) === '[object Array]' ? a : [];
+  }
   function filterHist() {
-    var a = storageGet('netflix_filter_hist', '[]'), last = String(storageGet('netflix_filter', '') || ''), out = [], i;
-    if (Object.prototype.toString.call(a) !== '[object Array]') a = [];
-    if (last && nfMode(parseNf(last)) !== 'world') out.push(buildNf(parseNf(last)));
-    for (i = 0; i < a.length && out.length < SHELF_MAX; i++) if (typeof a[i] === 'string' && a[i] && out.indexOf(a[i]) < 0) out.push(a[i]);
+    var a = histRaw(), last = String(storageGet('netflix_filter', '') || ''), out = [], keys = [], i;
+    function add(nf) { var k = histKey(nf); if (keys.indexOf(k) < 0) { keys.push(k); out.push(nf); } }
+    if (last && nfMode(parseNf(last)) !== 'world') add(buildNf(parseNf(last)));
+    for (i = 0; i < a.length && out.length < SHELF_MAX; i++) if (typeof a[i] === 'string' && a[i]) add(a[i]);
     return out;
   }
-  // Подбор показан (экран netflix не в виде «Мир») — он первый в истории.
+  // Подбор показан (экран netflix не в виде «Мир») — он первый в истории. true — его там не было (с любой
+  // сортировкой): записал его этот экран.
   function addFilterHist(canon) {
-    var a = filterHist(), i = a.indexOf(canon);
-    if (i >= 0) a.splice(i, 1);
+    var a = filterHist(), raw = histRaw(), key = histKey(canon), had = false, i;
+    for (i = 0; i < raw.length; i++) if (typeof raw[i] === 'string' && raw[i] && histKey(raw[i]) === key) had = true;
+    for (i = a.length - 1; i >= 0; i--) if (histKey(a[i]) === key) a.splice(i, 1);
     a.unshift(canon);
     storageSet('netflix_filter_hist', a.slice(0, SHELF_MAX));
+    return !had;
+  }
+  // Промежуточный шаг цепочки уточнений уходит из истории (applyNf перед replace).
+  function dropFilterHist(canon) {
+    var a = histRaw(), out = [], i;
+    for (i = 0; i < a.length; i++) if (a[i] !== canon) out.push(a[i]);
+    if (out.length !== a.length) storageSet('netflix_filter_hist', out);
   }
   function shelfTile(nf, k, d) {
     var o = nf ? parseNf(nf) : null, by = o && o.s && SORT[o.s] ? ' · ' + SORT[o.s].by : '';
@@ -2315,15 +2331,18 @@
   // Тайтл — только в одной плитке: если он уже стоит в ряду, плитку берёт следующий в списке (иначе
   // «Игра в кальмара» заняла бы четыре плитки из восьми). Такая плитка честно называет своё место
   // («№3 · 411,3 млн ч») и держателя рекорда — его первой показывает сетка списка, которую открывает OK.
+  // Место — по рекорду, как его видно на бейдже: равные делят место, и равный первому не «2-е», а делит
+  // рекорд (Red Notice и «Игра в кальмара» — оба №1 в 94 странах).
   function recordsRow(title, o) {
-    var items = [], used = {}, i, j, key, list;
+    var items = [], used = {}, i, j, k, key, list, place;
     for (i = 0; i < HALL_HOME.length; i++) {
       key = HALL_HOME[i];
       list = hallFiltered(key, o);
       for (j = 0; j < list.length; j++) {
         if (used[list[j].n]) continue;
         used[list[j].n] = true;
-        items.push(hallCard(key, list[j], true, j ? { place: j + 1, top: list[0] } : null));
+        for (place = 1, k = 0; k < j; k++) if (list[k].badge !== list[j].badge) place++;
+        items.push(hallCard(key, list[j], true, j ? { place: place, top: list[0] } : null));
         break;
       }
     }
@@ -2337,12 +2356,15 @@
   function hallCard(key, e, tile, below) {
     var x = { meta: e.badge, wk: e.W >= 0 ? e.W : null, tp: e.sid != null ? seasonShort(slabel(e.sid)) : '', age: hallMoment(key, e) }, s0;
     x[tile ? 'rec' : 'hk'] = key;
-    // Плитка не с первого места: бейдж с местом, в строке фокуса — чей рекорд (cardInfo).
+    // Плитка не с первого места: бейдж с местом, в строке фокуса — чей рекорд (cardInfo). Равный первому
+    // места не пишет: бейдж — свой рекорд, в строке фокуса — с кем он его делит (rtie).
     if (below) {
       s0 = below.top.sid != null ? seasonShort(slabel(below.top.sid)) : '';
       // «№3 · 411,3 млн ч»; бейдж со своим «№» — «2-е · №1 в 94», а не «№2 · №1 в 94».
-      x.meta = (/^№/.test(e.badge) ? below.place + '-е · ' : '№' + below.place + ' · ') + e.badge;
-      x.rp = below.place;
+      if (below.place > 1) {
+        x.meta = (/^№/.test(e.badge) ? below.place + '-е · ' : '№' + below.place + ' · ') + e.badge;
+        x.rp = below.place;
+      } else x.rtie = 1;
       x.rtop = titleName(D.T[below.top.n]) + (s0 ? ' ' + s0 : '') + ', ' + below.top.badge;
     }
     return makeCard(D.T[e.n], e.sid, x);
@@ -2790,8 +2812,18 @@
     el.find('.nf-info__title').html(esc(info[0]) + (info[2] ? '<span class="nf-info__orig">' + esc(info[2]) + '</span>' : ''));
     el.find('.nf-info__facts').text(info[1] || '');
   }
+  // Недели сезона в мировом топе и его лучшее место — null, если в мировом топе его не было.
+  function seasonTop(sid) {
+    var list = D.global && D.global.bySid[sid], ws = {}, w = 0, b = 0, i;
+    if (!list || !list.length) return null;
+    for (i = 0; i < list.length; i++) {
+      if (!ws[list[i].W]) { ws[list[i].W] = 1; w++; }
+      if (!b || list[i].pl < b) b = list[i].pl;
+    }
+    return { w: w, b: b };
+  }
   function cardInfo(nf) {
-    var T = D.T[nf.n], hk = nf.rec || nf.hk, parts = [], lab, x, cs, now;
+    var T = D.T[nf.n], hk = nf.rec || nf.hk, parts = [], lab, x, cs, now, sm, whole;
     if (!T) return null;
     lab = seasonLong(slabel(nf.sid));
     if (hk) {
@@ -2801,7 +2833,7 @@
       if (nf.rp) x = x.replace(/^(?:№\d+|\d+-е) · /, '');
       parts.push(HALL_T[hk].title + (nf.rp ? ' · ' + nf.rp + '-е место' : '') + ': ' + (/подряд/.test(HALL_T[hk].title) ? x.replace(/\s*подряд$/, '') : x));
       if (nf.age) parts.push(nf.age);
-      if (nf.rtop) parts.push('рекорд — ' + nf.rtop);
+      if (nf.rtop) parts.push((nf.rtie ? 'делит рекорд — ' : 'рекорд — ') + nf.rtop);
     } else if (nf.pl && nf.cat != null) parts.push('№' + nf.pl + ' ' + LIST_GEN[nf.cat]);
     else if (nf.cpl && nf.cc) parts.push('№' + nf.cpl + ' ' + countryPrep(nf.cc));
     else if (/^91 день · /.test(nf.age || '')) {
@@ -2816,8 +2848,17 @@
     if (x > 1) parts.push('№1 ' + x + ' нед. подряд');
     if (nf.v) parts.push(viewsLabel(nf.v));
     if (nf.h) parts.push(hoursLabel(nf.h));
-    if (!nf.pl && !nf.cpl && !hk && T.gw) parts.push('в мировом топе ' + T.gw + ' нед.' + (T.gb ? ' · лучшее №' + T.gb : ''));
-    if (!nf.pl && !nf.cpl && T.c1 && hk !== 'c1') parts.push('№1 в ' + T.c1 + ' ' + plural(T.c1, 'стране', 'странах', 'странах') + ' за всё время');
+    // Итоги тайтла (gw, gb, c1) — у сериала целиком. Под названием с сезоном недели и лучшее место — самого
+    // сезона (global.bySid); чего по сезону нет, подписано как итог всего сериала.
+    sm = !!lab && nf.sid != null && (!D.index || sidsOf(T.n).length > 1);
+    whole = [];
+    if (!nf.pl && !nf.cpl && !hk) {
+      x = sm && D.global ? seasonTop(nf.sid) : null;
+      if (x) parts.push('в мировом топе ' + x.w + ' нед. · лучшее №' + x.b);
+      else if (T.gw) whole.push('в мировом топе ' + T.gw + ' нед.' + (T.gb ? ' · лучшее №' + T.gb : ''));
+    }
+    if (!nf.pl && !nf.cpl && T.c1 && hk !== 'c1') whole.push('№1 в ' + T.c1 + ' ' + plural(T.c1, 'стране', 'странах', 'странах') + ' за всё время');
+    if (whole.length) parts.push((sm ? 'весь сериал: ' : '') + whole.join(' · '));
     if (now && !hk) {
       cs = nowCountries(T.n, nf.sid);
       x = nf.wk == null ? 'сейчас ' : '';
@@ -3559,6 +3600,8 @@
           return;
         }
       }
+      // Шаг цепочки уточнений, который этот экран сам записал в «Мои подборы», уступает место итогу.
+      if (cur.nf_hnew && useful(o)) dropFilterHist(cur.nf || '');
       Lampa.Activity.replace(obj);
     }, opts);
   }
@@ -3613,8 +3656,9 @@
     firstHint();
   }
   // Плитка, переписанная на месте, и её прежнее содержимое: страна или подбор. Фокус — на плитку с тем же
-  // содержимым; на полке «Мои подборы» без такой — на первую: там подбор, с которого вернулись.
-  function tileKey(d) { return d.tile === 'country' ? 'c:' + d.code : d.act + ':' + (d.nf || ''); }
+  // содержимым; на полке «Мои подборы» без такой — на первую: там подбор, с которого вернулись. Сортировка
+  // подбор не меняет: «Аниме · по часам» на полке — та же плитка, что «Аниме» (histKey).
+  function tileKey(d) { return d.tile === 'country' ? 'c:' + d.code : d.act + ':' + (d.act === 'nf' ? histKey(d.nf || '') : d.nf || ''); }
   function refocusTile(row, key) {
     var list = row ? row.results : [], i, k = -1, el;
     for (i = 0; i < list.length && k < 0; i++) if (list[i].__tile && tileKey(list[i]) === key) k = i;
@@ -3642,10 +3686,45 @@
   function startLater(comp, object) {
     if (activeObj() === object) Lampa.Controller.add('content', { invisible: true, toggle: function () { comp.start(); }, back: function () { Lampa.Activity.backward(); } });
   }
+  // Пачки comp.next. Lampa зовёт onEnd из одноразового обработчика конца анимации прокрутки (scroll.js
+  // startScroll), а его первым съедает всплывший transitionend фишки, уходящей из фокуса, — в первые 300 мс
+  // после создания скролла (time_call_end) он отбрасывается, и onEnd не будет. Прокрутку же, что уже у края,
+  // ↓ не двигает, и onEnd Lampa не зовёт вовсе (isFilled). Экран из двух рядов («Индия · 292») так и не
+  // получал пачку 2. Поэтому край после каждого ↓ проверяет сам экран — по правилу isEnd (end_ratio 1.5
+  // у InteractionMain); второй запрос, пока идёт первый, loadNext не пускает (next_wait).
+  function loadAtEnd(comp, isDead) {
+    var down = comp.down;
+    if (!down) return;
+    comp.down = function () {
+      down.apply(comp, arguments);
+      if (!isDead() && comp.loadNext && scrollAtEnd(comp.render(true))) comp.loadNext();
+    };
+  }
+  function vScroll(root) { return root && root.querySelector ? root.querySelector('.scroll:not(.scroll--horizontal)') : null; }
+  function scrollAtEnd(root) {
+    var sc = vScroll(root), body = sc && sc.querySelector('.scroll__body'), h, b, m, pos;
+    if (!body || !(h = sc.offsetHeight)) return false;
+    b = body.offsetHeight;
+    m = /translate3d\(\s*-?[\d.]+px,\s*(-?[\d.]+)px/.exec(body.style.webkitTransform || body.style.transform || '');
+    pos = m ? Math.abs(parseFloat(m[1])) : sc.scrollTop;
+    return b < h || b - h * 1.5 < pos;
+  }
   function componentNetflix(object) {
     var comp = new Lampa.InteractionMain(object), o = parseNf(object.nf), plan = planScreen(o), next = 0, dead = false, unsub = null, chips = null;
-    var inherited = comp.destroy ? comp.destroy.bind(comp) : function () {}, started = comp.start.bind(comp);
+    var inherited = comp.destroy ? comp.destroy.bind(comp) : function () {}, started = comp.start.bind(comp), build0 = comp.build;
     var built = false, pending = false, noteLater = false, failed = false, failNoted = false, shelf = null, ccRow = null, seen = null;
+
+    object.nf_hnew = false;   // addFilterHist впервые записал подбор экрана в «Мои подборы» — applyNf уберёт его, заменяя экран
+    loadAtEnd(comp, function () { return dead; });
+    // Короткий экран (фишки и один ряд «Старое кино в топе») не даёт прокрутке поднять ряд 1 к шапке: она
+    // упирается в высоту содержимого, и фишки остаются наполовину под шапкой. Тело скролла — не ниже экрана
+    // с рядом фишек (nf-scr-body).
+    comp.build = function (rows) {
+      var sc;
+      build0.call(this, rows);
+      sc = vScroll(this.render(true));
+      if (sc) $(sc).find('.scroll__body').first().addClass('nf-scr-body');
+    };
 
     comp.create = function () {
       var self = this;
@@ -3662,7 +3741,7 @@
             var rows, i, own;
             if (dead) return;
             try { rows = plan.first(o); } catch (e) { log('build', e && e.stack); self.nfState('build', ''); return; }
-            if (useful(o)) addFilterHist(buildNf(o));   // «Мои подборы» (§5.2.1): только подбор с результатами
+            if (useful(o)) object.nf_hnew = addFilterHist(buildNf(o));   // «Мои подборы» (§5.2.1): только подбор с результатами
             if (rows[0] && rows[0].line_type === 'nf-chips') chips = rows[0];
             for (i = 0; i < rows.length; i++) {
               if (rows[i].nf_shelf) shelf = rows[i];
@@ -3935,6 +4014,7 @@
     var inherited = comp.destroy ? comp.destroy.bind(comp) : function () {}, started = comp.start.bind(comp);
     var built = false, pending = false, noteLater = false, years = null, target = null;
 
+    loadAtEnd(comp, function () { return dead; });
     comp.create = function () {
       var self = this;
       this.activity.loader(true);
@@ -4047,6 +4127,7 @@
     var comp = new Lampa.InteractionMain(object), o = parseNf(object.nf), next = HALL_FIRST, dead = false;
     var inherited = comp.destroy ? comp.destroy.bind(comp) : function () {}, started = comp.start.bind(comp), noteLater = false;
 
+    loadAtEnd(comp, function () { return dead; });
     comp.create = function () {
       var self = this;
       this.activity.loader(true);
@@ -5206,10 +5287,16 @@
     Lampa.Listener.follow('activity', function (e) { if (e && e.type === 'start') sync(e.object || { component: e.component }); });
   }
   // Пункт меню всегда открывает «Мир» (§5.1) с последней сортировкой; прошлый подбор ждёт на плитке.
+  // «Мира» на «Мире» не бывает (§6.4.7): на «Мире» пункт его заменяет, как меню Lampa свой же компонент
+  // (menu.js prepared → Activity.replace); на подборе или стране — шаг назад к «Миру» под ним, как сброс
+  // подбора (applyNf). С других экранов — push.
   function openRoot() {
-    var o = emptyNf(), s = String(storageGet('netflix_sort', '') || '');
+    var o = emptyNf(), s = String(storageGet('netflix_sort', '') || ''), cur = activeObj(), obj;
     if (SORT[s]) o.s = s === 'pop' ? '' : s;
-    Lampa.Activity.push({ url: '', title: nfTitle(o), component: 'netflix', source: 'tmdb', page: 1, nf: buildNf(o) });
+    obj = { url: '', title: nfTitle(o), component: 'netflix', source: 'tmdb', page: 1, nf: buildNf(o) };
+    if (!cur || cur.component !== 'netflix') Lampa.Activity.push(obj);
+    else if (nfMode(parseNf(cur.nf)) === 'world') Lampa.Activity.replace(obj);
+    else applyNf(o);
   }
   function addMenuItem() {
     var item = $('<li class="menu__item selector" data-action="netflix"><div class="menu__ico">' + ICON + '</div><div class="menu__text">' + MENU_TITLE + '</div></li>');
@@ -5273,6 +5360,7 @@
     '.nf-info__orig{font-size:.72em;font-weight:400;opacity:.6;margin-left:.8em}' +
     '.nf-info__facts{font-size:1.1em;line-height:1.35;max-height:2.7em;margin-top:.15em;opacity:.92;overflow:hidden}' +
     '.nf-info-pad{padding-bottom:5.6em}' +
+    '.nf-scr-body{min-height:100vh;min-height:-webkit-calc(100vh + 11em);min-height:calc(100vh + 11em)}' +
     // Оверлей трейлера (§8.5): выше шапки, меню и Select (55), ниже Noty (99). Подписи сверху: снизу —
     // субтитры YouTube. Полоса подписей непрозрачная: под ней прячется строка названия и аватар канала,
     // которые YouTube сам показывает в начале ролика и на паузе.
