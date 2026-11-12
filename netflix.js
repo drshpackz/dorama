@@ -202,7 +202,7 @@
   ];
   var HALL_HOME = ['streak', 'whours', 'wviews', 'runs', 'c1', 'sleep', 'franch', 'back'];
 
-  // §5.2.1 — готовые подборки (строки nf). act — плитка открывает экран, а не подбор.
+  // §5.2.1 — готовые подборки (строки nf). act — плитка открывает экран или сетку (list), а не подбор.
   var COLLECTIONS = [
     { title: 'Дорамы', nf: 't=s;o=kr' },
     { title: 'Что смотрит Корея', nf: 'c=KR' },
@@ -211,7 +211,7 @@
     { title: 'Детям', nf: 'g=family,anim' },
     { title: 'Старое кино в топе', nf: 't=f;r=old' },
     { title: 'Россия до 2022', nf: 'c=RU' },
-    { title: 'Рекорды №1', nf: 's=streak' },
+    { title: 'Рекорды №1', act: 'grid', list: 'hall:streak' },
     { title: 'История топа', act: 'weeks' },
     { title: 'Зал славы', act: 'hall' }
   ];
@@ -816,7 +816,8 @@
     }
     return out;
   }
-  // Новинки недели (§5.2, ряд 3): все позиции W с cw = 1, по метрике.
+  // Новинки недели (§5.2, ряд 3): все позиции W с cw = 1, по метрике. У прямых эфиров (WWE) каждый эфир —
+  // свой сезон с cw = 1: шоу, которое было в чарте раньше W, — не новинка.
   function worldNew(W, o) {
     var list = mergedWeek(W, [0, 1, 2, 3]), out = [], i, e, T;
     for (i = 0; i < list.length; i++) {
@@ -824,6 +825,7 @@
       if (e.cw !== 1) continue;
       T = D.T[owner(e.sid)];
       if (!T || (o && !passFacets(T, o, '', true))) continue;
+      if (T.lv === 1 && typeof T.gf === 'number' && T.gf >= 0 && T.gf < W) continue;
       out.push(makeCard(T, e.sid, { meta: '№' + e.pl, wk: W, cat: e.cat, pl: e.pl, cw: e.cw, h: e.h, v: e.v,
         tp: seasonShort(slabel(e.sid)), age: LIST_SHORT[e.cat] + ' · ' + (e.W >= vf() && e.v ? viewsLabel(e.v) : hoursLabel(e.h)) }));
     }
@@ -1265,13 +1267,20 @@
       for (i = 0; i < all.length; i++) if (xpMatch(all[i], m[1], m[2])) list.push(all[i]);
       return { list: sortTitles(list, ctx), ctx: ctx };
     }
-    if (key === 'cl' || key === 'lg') {
+    if (key === 'cl' || key === 'cx' || key === 'lg') {
       C = o.c ? D.cty[o.c] : null;
       if (!C) return { list: [], ctx: sortCtx(o) };
-      if (key === 'cl') {
-        // «Только в стране»: тайтлы файла страны, которых нет в мировом индексе.
-        ctx = sortCtx(o);
-        for (i = 0; i < C.local.length; i++) { T = D.T[C.local[i]]; if (T && !T.inIdx && passFacets(T, o)) list.push(T); }
+      if (key !== 'lg') {
+        // Местные тайтлы файла страны (их нет в мировом индексе). cl — «Только в стране»: в топе были только
+        // здесь или почти только здесь (на страну приходится не меньше половины их страно-недель); cx — остальные,
+        // «Не попали в мировой топ», с подписью «ещё в N странах».
+        ctx = sortCtx(o); all = periodAgg(o.c, '').a;
+        for (i = 0; i < C.local.length; i++) {
+          T = D.T[C.local[i]];
+          if (!T || T.inIdx || !passFacets(T, o)) continue;
+          if (((T.nc || 0) <= 1 || 2 * (all[T.n] || ZERO).wk >= (T.cw || 0)) === (key === 'cl')) list.push(T);
+        }
+        if (key === 'cx') ctx.age = function (T2) { var k = Math.max(1, (T2.nc || 1) - 1); return 'ещё в ' + k + ' ' + plural(k, 'стране', 'странах', 'странах'); };
       } else {
         // Легенды страны: больше всего недель №1, свой порядок.
         ctx = sortCtx(o, 'top1'); all = resultTitles(o);
@@ -1295,8 +1304,14 @@
   // Все карточки сетки. null — ключ неизвестен или данных для него нет.
   function gridCards(o, key) {
     var L = titleList(o, key), out = [], m, list, i;
-    if (L) { for (i = 0; i < L.list.length; i++) out.push(titleCard(L.list[i], L.ctx)); return out; }
-    if ((m = /^wk(\d+)$/.exec(key))) return weekAllCards(o, +m[1]);
+    if (L) {
+      for (i = 0; i < L.list.length; i++) {
+        out.push(titleCard(L.list[i], L.ctx));
+        if (L.ctx.age) out[i].nf.age = L.ctx.age(L.list[i]);
+      }
+      return out;
+    }
+    if ((m = /^wk(\d+)(f?)$/.exec(key))) return weekAllCards(o, +m[1], !!m[2]);
     if (key === 'at') return alltimeCards(o);
     if ((m = /^hall:(\w+)$/.exec(key)) && HALL_T[m[1]]) {
       list = hallFiltered(m[1], o);
@@ -1306,13 +1321,15 @@
     return null;
   }
   // Все позиции недели: мир — четыре списка Netflix по 10 (сериалы, затем фильмы), страна — её 20.
-  // Подбор фильтрует позиции по тайтлу, настоящие места остаются.
-  function weekAllCards(o, W) {
-    var out = [], cats = [2, 3, 0, 1], wd, C, i, j, list, e, T, cards;
+  // films — сетка из ряда фильмов (ключ wk<W>f): фильмы первыми. Подбор фильтрует позиции по тайтлу,
+  // настоящие места остаются.
+  function weekAllCards(o, W, films) {
+    var out = [], cats = films ? [0, 1, 2, 3] : [2, 3, 0, 1], kinds = films ? [0, 1] : [1, 0], wd, C, i, j, k, list, e, T, cards;
     if (o.c) {
       C = D.cty[o.c];
       if (!C) return null;
-      for (i = 1; i >= 0; i--) {
+      for (k = 0; k < kinds.length; k++) {
+        i = kinds[k];
         cards = countryTop(C, W, i, o);
         for (j = 0; j < cards.length; j++) {
           cards[j].nf.meta = (i ? 'Сериалы' : 'Фильмы') + ' №' + cards[j].nf.rank;
@@ -1375,10 +1392,12 @@
     if ((m = /^xp:p:y(\d{4})$/.exec(key))) return (sum ? sum + ' · ' : '') + m[1] + ' · ' + SORT[effSort(withNf(o, 'p', 'y' + m[1]))].by;
     if ((m = /^xp:([got]):(.+)$/.exec(key))) return (sum ? sum + ' · ' : '') + xpName(m[1], m[2]) + ' · ' + by;
     if (key === 'cl') return tail('Только ' + (o.c ? countryPrep(o.c) : 'в стране')) + ' · ' + by;
+    if (key === 'cx') return tail('Не попали в мировой топ' + (o.c ? ' · ' + countryName(o.c) : '')) + ' · ' + by;
     if (key === 'lg') return tail('Легенды: больше всего недель №1' + (o.c ? ' · ' + countryName(o.c) : ''));
     if (key === 'ru') return tail('Россия до марта 2022') + ' · ' + SORT[effSort(withNf(o, 'c', 'RU'))].by;
     if ((m = /^sim:(\d+)$/.exec(key))) { S = similarSpec(D.T[+m[1]]); return S ? S.title : 'Похожие в топе'; }
-    if ((m = /^wk(\d+)$/.exec(key))) return tail(weekLabel(+m[1]) + ' · ' + (o.c ? countryName(o.c) : 'четыре списка Netflix'));
+    // Мир: столько списков Netflix, сколько их оставляет тип подбора (Сериалы — два, «Фильмы на английском» — один).
+    if ((m = /^wk(\d+)f?$/.exec(key))) return tail(weekLabel(+m[1]) + ' · ' + (o.c ? countryName(o.c) : ['', 'список Netflix', 'два списка Netflix', 'три списка Netflix', 'четыре списка Netflix'][chartCats(0, o).length + chartCats(1, o).length]));
     if (key === 'at') return tail('Лучшие за всё время · рейтинг Netflix');
     if ((m = /^hall:(\w+)$/.exec(key)) && HALL_T[m[1]]) return tail(HALL_T[m[1]].title);
     return '';
@@ -1394,19 +1413,28 @@
   function tileRow(title, items, type) {
     return { title: title, results: items, cardClass: makeTile, nomore: true, noimage: true, line_type: type || 'nf-tiles', nf_row: true };
   }
-  // Плитка в конце ряда карточек («История →», «Все 40 →»): своя cardClass у элемента.
+  // Плитка в конце ряда карточек («История →», «Все 40 →»): своя cardClass у элемента. Заголовок сетки,
+  // которую открывает плитка, — в extra.gtitle: title и sub — подпись самой плитки.
   function tailTile(title, sub, extra) {
-    var d = { tile: 'tail', title: title, sub: sub || '', cardClass: makeTile }, k;
+    var d = { tile: 'tail', cardClass: makeTile }, k;
     if (extra) for (k in extra) if (extra.hasOwnProperty(k)) d[k] = extra[k];
+    d.title = title; d.sub = sub || '';
     return d;
   }
-  // Тайтловый ряд: 20 первых по сортировке, бейдж сортировки; «Ещё» → сетка gridList (§5.5).
+  // «Ещё →» с размером списка — своя плитка вместо родной карточки «Ещё» старого ряда: та запоминает в фокусе
+  // событие, а не элемент (line.js:198-205), и после «Назад» из сетки фокуса нет, а ← открывает боковое меню.
+  function moreTail(n, list, gtitle) { return tailTile('Ещё →', 'всего ' + fmtInt(n), { act: 'grid', list: list, gtitle: gtitle }); }
+  // Тайтловый ряд: 20 первых по сортировке, бейдж сортировки; «Ещё →» → сетка gridList (§5.5). Ряд результата
+  // (res) кончается плиткой «Случайный хит». ctx.age — своя строка под названием (cx: «ещё в 3 странах»).
   function titlesRow(title, list, o, ctx, gridList) {
-    var cards = [], i, row, more = !!gridList && list.length > ROW_MAX && hasScreen('netflix_grid');
-    for (i = 0; i < list.length && cards.length < ROW_MAX; i++) cards.push(titleCard(list[i], ctx));
-    row = cardRow(title, cards, { nomore: !more, nf_list: gridList || '' });
-    if (more) row.onMore = function () { openGrid(o, gridList, title); };
-    return row;
+    var cards = [], i;
+    for (i = 0; i < list.length && cards.length < ROW_MAX; i++) {
+      cards.push(titleCard(list[i], ctx));
+      if (ctx.age) cards[i].nf.age = ctx.age(list[i]);
+    }
+    if (gridList && list.length > ROW_MAX && hasScreen('netflix_grid')) cards.push(moreTail(list.length, gridList, title));
+    if (gridList === 'res' && cards.length) cards.push(tailTile('Случайный хит', 'трейлер наугад', { act: 'random' }));
+    return cardRow(title, cards, { nf_list: gridList || '' });
   }
   function dayOfWeek(W) { var d = weekSun(W); return d.getUTCDate() + ' ' + MON_GEN[d.getUTCMonth()]; }
   // «Хиты 2026 (по 8 ноября)», «Хиты 2025», «Хиты 2021 (с июля)»; у страны — «Хиты Южной Кореи 2026».
@@ -1444,42 +1472,110 @@
   function historyTail(W) { return hasScreen('netflix_weeks') ? [tailTile('История →', weekLabel(W, { short: true }), { act: 'weeks', W: W })] : []; }
   function withTail(cards, tail) { return cards.length ? cards.concat(tail) : cards; }
   // Ряд 4 — «Сейчас №1 по странам»: недавние страны, затем список §5.2; постер — №1 сериал страны.
-  function countriesRow() {
-    var order = recentCountries().concat(NOW_TILES), seen = {}, items = [], i, code, list, T;
+  // Ряд строится один раз, а при возврате на «Мир» плитки переписываются на месте (refreshCountries).
+  function countryOrder() {
+    var order = recentCountries().concat(NOW_TILES), seen = {}, out = [], i, code, list;
     for (i = 0; i < order.length; i++) {
       code = order[i];
       if (seen[code]) continue;
       seen[code] = 1;
       list = D.home.c[code];
-      if (!list || !list[1] || !list[1].length) continue;
-      T = D.T[owner(list[1][0])];
-      items.push({ tile: 'country', act: 'country', code: code, title: countryName(code), sub: T ? '№1: ' + titleName(T) : '', img: T ? T.p : '' });
+      if (list && list[1] && list[1].length) out.push(code);
     }
-    items.push({ tile: 'tail', act: 'chartMenu', title: 'Все страны →', short: true });
-    return tileRow('Сейчас №1 по странам', items);
+    return out;
   }
-  // Ряд 5 — подборки §5.2.1 и «↩ Прошлый подбор».
-  function collectionsRow() {
-    var items = [], last = String(storageGet('netflix_filter', '') || ''), i, C, lo;
-    if (last) {
-      lo = parseNf(last);
-      if (nfMode(lo) !== 'world') items.push({ tile: 'col', act: 'nf', nf: buildNf(lo), title: '↩ Прошлый подбор', sub: nfSummary(lo), color: 0 });
+  function countryTile(code, d) {
+    var T = D.T[owner(D.home.c[code][1][0])];
+    d = d || { tile: 'country', act: 'country' };
+    d.code = code; d.title = countryName(code); d.sub = T ? '№1: ' + titleName(T) : ''; d.img = T ? T.p : '';
+    return d;
+  }
+  function countriesRow() {
+    var codes = countryOrder(), items = [], i, row;
+    for (i = 0; i < codes.length; i++) items.push(countryTile(codes[i]));
+    items.push({ tile: 'tail', act: 'chartMenu', title: 'Все страны →', short: true });
+    row = tileRow('Сейчас №1 по странам', items);
+    row.nf_cc = true;
+    return row;
+  }
+  function refreshCountries(row) {
+    var codes = countryOrder(), list = row.results, i, d;
+    for (i = 0; i < list.length && i < codes.length; i++) {
+      d = list[i];
+      if (d.tile !== 'country' || d.code === codes[i]) continue;
+      countryTile(codes[i], d);
+      if (d.__tile) d.__tile.update();
     }
+  }
+  // «Мои подборы» — до SHELF_MAX последних подборов (Storage netflix_filter_hist, новые первыми) в начале
+  // «Подборок». Первый — «↩ Прошлый подбор»: netflix_filter, его пишет remember(). За ними, пока их меньше
+  // SHELF_MAX, — «Свой подбор», он открывает «Фильтры». Ряд строится один раз: при возврате на «Мир»
+  // плитки переписываются на месте (refreshShelf; новый подбор занимает место «Своего подбора» или
+  // вытесняет самый старый), и OK применяет ровно то, что на плитке.
+  var SHELF_MAX = 5;
+  function filterHist() {
+    var a = storageGet('netflix_filter_hist', '[]'), last = String(storageGet('netflix_filter', '') || ''), out = [], i;
+    if (Object.prototype.toString.call(a) !== '[object Array]') a = [];
+    if (last && nfMode(parseNf(last)) !== 'world') out.push(buildNf(parseNf(last)));
+    for (i = 0; i < a.length && out.length < SHELF_MAX; i++) if (typeof a[i] === 'string' && a[i] && out.indexOf(a[i]) < 0) out.push(a[i]);
+    return out;
+  }
+  // Подбор показан (экран netflix не в виде «Мир») — он первый в истории.
+  function addFilterHist(canon) {
+    var a = filterHist(), i = a.indexOf(canon);
+    if (i >= 0) a.splice(i, 1);
+    a.unshift(canon);
+    storageSet('netflix_filter_hist', a.slice(0, SHELF_MAX));
+  }
+  function shelfTile(nf, k, d) {
+    var o = nf ? parseNf(nf) : null, by = o && o.s && SORT[o.s] ? ' · ' + SORT[o.s].by : '';
+    d = d || { tile: 'col', color: 0 };
+    if (!o) { d.act = 'filters'; d.nf = ''; d.title = 'Свой подбор'; d.sub = 'тип, жанр, страна, год'; return d; }
+    d.act = 'nf'; d.exact = true; d.nf = nf;
+    d.title = k ? nfSummary(o) : '↩ Прошлый подбор';
+    d.sub = (k ? 'мой подбор' : nfSummary(o)) + by;
+    return d;
+  }
+  function refreshShelf(row) {
+    var hist = filterHist(), list = row.results, i, d, was;
+    storageSet('netflix_filter_hist', hist);
+    for (i = 0; i < list.length && list[i].nf_shelf; i++) {
+      d = list[i];
+      was = d.act + '|' + d.nf + '|' + d.title + '|' + d.sub;
+      shelfTile(hist[i] || '', i, d);
+      if (d.__tile && was !== d.act + '|' + d.nf + '|' + d.title + '|' + d.sub) d.__tile.update();
+    }
+  }
+  // Ряд 5 — «Мои подборы» и подборки §5.2.1.
+  function collectionsRow() {
+    var hist = filterHist(), items = [], i, C, row;
+    storageSet('netflix_filter_hist', hist);
+    for (i = 0; i < Math.min(SHELF_MAX, hist.length + 1); i++) { items.push(shelfTile(hist[i] || '', i)); items[i].nf_shelf = true; }
     for (i = 0; i < COLLECTIONS.length; i++) {
       C = COLLECTIONS[i];
       if (C.act === 'weeks' && !hasScreen('netflix_weeks')) continue;
       if (C.act === 'hall' && !hasScreen('netflix_hall')) continue;
-      items.push({ tile: 'col', act: C.act || 'nf', nf: C.nf || '', title: C.title, color: i + 1 });
+      if (C.act === 'grid' && !hasScreen('netflix_grid')) continue;
+      items.push({ tile: 'col', act: C.act || 'nf', nf: C.nf || '', list: C.list || '', title: C.title, color: i + 1 });
     }
-    return tileRow('Подборки', items);
+    row = tileRow('Подборки', items);
+    row.nf_shelf = true;
+    return row;
   }
   // Плитки-рекорды: первое место списков Зала славы среди прошедших подбор (§5.2, ряд 7; §5.4, ряд 11).
+  // Тайтл — только в одной плитке: если он уже стоит в ряду, плитку берёт следующий в списке (иначе
+  // «Игра в кальмара» заняла бы четыре плитки из восьми).
   function recordsRow(title, o) {
-    var items = [], i, key, e;
+    var items = [], used = {}, i, j, key, list;
     for (i = 0; i < HALL_HOME.length; i++) {
       key = HALL_HOME[i];
-      e = hallFiltered(key, o, 1)[0];
-      if (e) items.push(hallCard(key, e, true));
+      list = hallFiltered(key, o);
+      for (j = 0; j < list.length; j++) {
+        if (used[list[j].n]) continue;
+        used[list[j].n] = true;
+        items.push(hallCard(key, list[j], true));
+        break;
+      }
     }
     if (!items.length) return null;
     if (hasScreen('netflix_hall')) items.push(tailTile('Весь зал славы →', '', { act: 'hall' }));
@@ -1517,7 +1613,9 @@
     for (i = 0; i < loc.length; i++) {
       e = loc[i]; T = D.T[e[0]];
       if (!T) continue;
-      items.push(makeCard(T, null, { meta: e[3] ? '№1 ×' + e[3] : '', age: String(e[1] || '').split(' ').map(countryShort).join(', ') + ' · ' + (e[2] || 0) + ' нед.' }));
+      // e[2] — страно-недели: у тайтла из одной страны это недели, у нескольких — «стр.-нед.».
+      items.push(makeCard(T, null, { meta: e[3] ? '№1 ×' + e[3] : '', age: String(e[1] || '').split(' ').map(countryShort).join(', ') + ' · ' + (e[2] || 0) +
+        (/ /.test(String(e[1] || '')) ? ' стр.-нед.' : ' нед.') }));
     }
     return items.length ? cardRow('Хиты, которых не знает мир', items) : null;
   }
@@ -1526,10 +1624,10 @@
     var list = alltimeList(), items = [], i, e, T, title = 'Лучшие за всё время · рейтинг Netflix';
     for (i = 0; i < list.length && i < 10; i++) {
       e = list[i].e; T = D.T[owner(e[0])];
-      if (T) items.push(makeCard(T, e[0], { rank: i + 1, meta: fmtUnits(e[2]), tp: seasonShort(slabel(e[0])), age: '91 день · ' + hoursLabel(e[1]) }));
+      if (T) items.push(makeCard(T, e[0], { rank: i + 1, meta: viewsLabel(e[2]), tp: seasonShort(slabel(e[0])), age: '91 день · ' + hoursLabel(e[1]) }));
     }
     if (!items.length) return null;
-    if (hasScreen('netflix_grid')) items.push(tailTile('Все 40 →', '', { act: 'grid', list: 'at', title: title }));
+    if (hasScreen('netflix_grid')) items.push(tailTile('Все 40 →', '', { act: 'grid', list: 'at', gtitle: title }));
     return cardRow(title, items, { line_type: 'nf-top' });
   }
   // Ряд 11 — «Россия до марта 2022»: тайтлы country/RU, по умолчанию по очкам в России.
@@ -1577,11 +1675,14 @@
     pushRow(rows, cardRow('Топ-10 сериалов · ' + name + ' · ' + when, withTail(countryTop(C, W, 1), historyTail(W)), { line_type: 'nf-top' }));
     pushRow(rows, cardRow('Топ-10 фильмов · ' + name + ' · ' + when, withTail(countryTop(C, W, 0), historyTail(W)), { line_type: 'nf-top' }));
     pushRow(rows, cardRow('Новинки недели · ' + name, countryNew(C, W)));
-    // Только здесь: тайтлы файла страны, которых нет в мировом индексе, по умолчанию по очкам в стране.
+    // Только здесь: местные тайтлы (нет в мировом индексе), бывшие в топе только или почти только здесь,
+    // по умолчанию по очкам в стране. Остальные местные — ряд «Не попали в мировой топ» после «Лучшего».
     L = titleList(o, 'cl');
     pushRow(rows, titlesRowOrNull('Только ' + countryPrep(c), L.list, o, L.ctx, 'cl'));
     L = titleList(o, 'res');
     pushRow(rows, titlesRowOrNull('Лучшее ' + countryPrep(c) + ' с июля 2021', L.list, o, L.ctx, 'res'));
+    L = titleList(o, 'cx');
+    pushRow(rows, titlesRowOrNull('Не попали в мировой топ · ' + name, L.list, o, L.ctx, 'cx'));
     return rows;
   }
   function countryRows2(o) {
@@ -1713,22 +1814,35 @@
       this.el.on('hover:long', function () { tileLong(data); });
       this.el.on('visible', function () { self.visible(); });
     };
+    function loadImg() {
+      var img = self.el.find('img')[0];
+      self.imgDone = true; self.imgSrc = data.img;
+      if (!img) return;
+      $(img).removeClass('nf-tile__img--on');
+      img.onload = function () { $(img).addClass('nf-tile__img--on'); };
+      img.onerror = function () { img.onerror = null; };
+      img.src = Lampa.Api.img(data.img, 'w300');
+    }
     this.visible = function () {
-      var img;
-      if (data.img && !self.imgDone && self.el && Lampa.Api && Lampa.Api.img) {
-        self.imgDone = true;
-        img = self.el.find('img')[0];
-        if (img) {
-          img.onload = function () { $(img).addClass('nf-tile__img--on'); };
-          img.onerror = function () { img.onerror = null; };
-          img.src = Lampa.Api.img(data.img, 'w300');
-        }
-      }
+      if (data.img && !self.imgDone && self.el && Lampa.Api && Lampa.Api.img) loadImg();
       if (self.onVisible) self.onVisible();
     };
+    // Данные плитки переписаны на месте (фишка — число, год — подчёркивание, «Мои подборы» и страны при
+    // возврате на «Мир» — подпись, код и постер): обновить её вид.
     this.update = function () {
-      if (!this.el || data.tile !== 'chip') return;
-      this.el.find('.nf-chip__value').text(data.value);
+      var el = this.el, sub;
+      if (!el) return;
+      if (data.tile === 'chip') { el.find('.nf-chip__value').text(data.value); return; }
+      if (data.tile === 'year') { el.toggleClass('nf-chip--active', !!data.active); return; }
+      el.find('.nf-tile__title').text(data.title || '');
+      if (data.tile === 'country') el.find('.nf-tile__code').text(data.code || '');
+      sub = el.find('.nf-tile__sub');
+      if (!sub.length && data.sub) { el.append('<div class="nf-tile__sub"></div>'); sub = el.find('.nf-tile__sub'); }
+      sub.text(data.sub || '');
+      if (self.imgDone && data.img !== self.imgSrc) {
+        if (data.img) loadImg();
+        else { self.imgSrc = ''; el.find('img').removeClass('nf-tile__img--on'); }
+      }
     };
     this.render = function (js) { return js ? (this.el && this.el[0]) : this.el; };
     this.destroy = function () { if (this.el) this.el.remove(); this.el = null; data.__tile = null; };
@@ -1751,17 +1865,41 @@
     col = TILE_COLORS[(d.color || 0) % TILE_COLORS.length].split(',');
     return '<div class="' + cls + '" style="background:linear-gradient(135deg,' + col[0] + ',' + col[1] + ')"><div class="nf-tile__title">' + esc(d.title) + '</div>' + sub + '</div>';
   }
+  // OK на плитке. exact — плитка «Мои подборы»: её подбор применяется как есть, без сортировки экрана.
   function tileEnter(d) {
     var cur = currentNf(), o2;
     if (d.act === 'chip') { openChip(d.key, cur, 'content'); return; }
-    if (d.act === 'nf') { o2 = parseNf(d.nf); if (!o2.s && cur.s) o2.s = cur.s; applyNf(o2); return; }
+    if (d.act === 'filters') { openChip('all', cur, 'content'); return; }
+    if (d.act === 'nf') { o2 = parseNf(d.nf); if (!d.exact && !o2.s && cur.s) o2.s = cur.s; applyNf(o2); return; }
     if (d.act === 'country') { o2 = emptyNf(); o2.s = cur.s; o2.c = d.code; applyNf(o2); return; }
     if (d.act === 'chartMenu') { openChip('c', cur, 'content'); return; }
     if (d.act === 'weeks') { openWeeks(cur, d.W); return; }
-    if (d.act === 'wyear') { Lampa.Activity.replace({ nf_w: String(d.W) }); return; }   // §5.6: плитка года
+    if (d.act === 'wyear') { Lampa.Activity.replace({ nf_w: String(d.W), nf_focus: '' }); return; }   // §5.6: плитка года
     if (d.act === 'hall') { openHall(cur); return; }
-    if (d.act === 'grid') { openGrid(cur, d.list, d.title); return; }
+    if (d.act === 'grid') { openGrid(cur, d.list, d.gtitle); return; }
+    if (d.act === 'random') { randomHit(); return; }
     if (d.act === 'countdown') countdown(d.W, d.kind);
+  }
+  // «Случайный хит» в конце ряда результата: тайтл подбора наугад, вес — корень популярности (очки),
+  // чтобы выпадали не только три главных хита; тот же тайтл два раза подряд не выпадает, заглушки без
+  // TMDB (ни трейлера, ни страницы) — только если других нет. Есть ключи трейлера — трейлер, нет —
+  // страница тайтла. Следующее OK — новый бросок.
+  var RANDOM_LAST = -1;
+  function randomHit() {
+    var o = currentNf(), ctx = sortCtx(o), list = resultTitles(o), w = [], sum = 0, ids = false, i, r, T;
+    if (!list.length) return;
+    for (i = 0; i < list.length && !ids; i++) ids = !!list[i].id;
+    for (i = 0; i < list.length; i++) {
+      w.push((list.length > 1 && list[i].n === RANDOM_LAST) || (ids && !list[i].id) ? 0 : Math.sqrt(Math.max(1, sortVal(list[i], 'pop', ctx))));
+      sum += w[i];
+    }
+    if (!sum) { w[0] = sum = 1; }
+    r = Math.random() * sum;
+    for (i = 0; i < list.length - 1 && (r >= w[i] || !w[i]); i++) r -= w[i];
+    T = list[i];
+    RANDOM_LAST = T.n;
+    if (trailerList(T, '').length) playTrailer(T, '');
+    else openTitle(titleCard(T, ctx));
   }
   // Долгое OK на фишке сбрасывает её фасет (§6.1).
   function tileLong(d) {
@@ -1896,7 +2034,7 @@
       if (a.nf_act === 'dossier') showDossier(T);
       else if (a.nf_act === 'similar') openSimilar(T);
       // Неделя ряда — в чарте экрана; рекорды Зала славы считаются по миру.
-      else if (a.nf_act === 'week') openWeeks(nf.rec || nf.hk ? withNf(currentNf(), 'c', '') : currentNf(), a.w);
+      else if (a.nf_act === 'week') openWeeks(nf.rec || nf.hk ? withNf(currentNf(), 'c', '') : currentNf(), a.w, nf.n);
       else if (a.nf_act === 'trailer') playTrailer(T, a.lang);
     }, 0);
   }
@@ -2294,12 +2432,13 @@
     if (!hasScreen('netflix_grid')) return;
     Lampa.Activity.push({ url: '', title: gridTitle(o, list) || title || MENU_TITLE, component: 'netflix_grid', source: 'tmdb', page: 1, nf: buildNf(o), nf_list: list });
   }
-  // История топа (§5.6) на неделе W; без W — последняя неделя чарта.
-  function openWeeks(o, W) {
+  // История топа (§5.6) на неделе W; без W — последняя неделя чарта. focusN — тайтл, чья карточка недели
+  // получит фокус (неделя открыта из досье или меню карточки).
+  function openWeeks(o, W, focusN) {
     var r = chartRange(o.c);
     if (!hasScreen('netflix_weeks')) return;
     Lampa.Activity.push({ url: '', title: weeksTitle(o), component: 'netflix_weeks', source: 'tmdb', page: 1,
-      nf: buildNf(o), nf_w: String(W >= 0 ? W : (r ? r[1] : lastW())) });
+      nf: buildNf(o), nf_w: String(W >= 0 ? W : (r ? r[1] : lastW())), nf_focus: focusN != null ? String(focusN) : '' });
   }
   // Зал славы (§5.7).
   function openHall(o) {
@@ -2331,14 +2470,43 @@
     if (days > STALE_DAYS && !NOTED.stale) { NOTED.stale = true; noty('Чарты Netflix не обновлялись ' + days + ' ' + plural(days, 'день', 'дня', 'дней')); }
     firstHint();
   }
+  // Плитка, переписанная на месте, и её прежнее содержимое: страна или подбор. Фокус — на плитку с тем же
+  // содержимым; на полке «Мои подборы» без такой — на первую: там подбор, с которого вернулись.
+  function tileKey(d) { return d.tile === 'country' ? 'c:' + d.code : d.act + ':' + (d.nf || ''); }
+  function refocusTile(row, key) {
+    var list = row ? row.results : [], i, k = -1, el;
+    for (i = 0; i < list.length && k < 0; i++) if (list[i].__tile && tileKey(list[i]) === key) k = i;
+    if (k < 0 && list[0] && list[0].nf_shelf) k = 0;
+    el = k >= 0 && list[k].__tile ? list[k].__tile.render(true) : null;
+    if (el) Lampa.Controller.collectionFocus(el, el.parentNode);
+  }
+  // Данные пришли, а зритель мог уже уйти с экрана или открыть поверх него поиск, настройки, Select.
+  // Пульт экран берёт, только если он активен и пульт у его «content». Иначе build идёт тихо: без
+  // activity.toggle (тот закрыл бы поиск: Controller.toggle('content') → toContent, controller.js),
+  // а ряд получает фокус, когда экран снова стартует (comp.start).
+  function ownsRemote(object) {
+    var c = null;
+    if (activeObj() !== object) return false;
+    try { c = Lampa.Controller.enabled(); } catch (e) {}
+    return !c || !c.name || c.name === 'content';
+  }
+  function buildQuiet(comp, object, rows) {
+    var act = comp.activity;
+    act.toggle = function () {};
+    try { comp.build(rows); } finally { delete act.toggle; }
+    // Экран активен под окном: окно, закрываясь, вернёт пульт в «content» — тогда экран и стартует.
+    if (activeObj() === object) Lampa.Controller.add('content', { invisible: true, toggle: function () { comp.start(); }, back: function () { Lampa.Activity.backward(); } });
+  }
   function componentNetflix(object) {
     var comp = new Lampa.InteractionMain(object), o = parseNf(object.nf), plan = planScreen(o), next = 0, dead = false, unsub = null, chips = null;
-    var inherited = comp.destroy ? comp.destroy.bind(comp) : function () {};
+    var inherited = comp.destroy ? comp.destroy.bind(comp) : function () {}, started = comp.start.bind(comp);
+    var built = false, pending = false, noteLater = false, failed = false, failNoted = false, shelf = null, ccRow = null, seen = null;
 
     comp.create = function () {
       var self = this;
       this.activity.loader(true);
       D.err = {};   // новый экран или «Обновить» — упавшие файлы пробуем заново
+      if (nfMode(o) !== 'world') addFilterHist(buildNf(o));   // «Мои подборы» (§5.2.1)
       // Всегда через setTimeout: при данных в памяти boot отвечает сразу, а build и down() должны идти
       // после старта активности, как в multi-fan.
       setTimeout(function () {
@@ -2347,29 +2515,67 @@
           if (dead) return;
           if (err) { self.nfState(err, ''); return; }
           waitFor(plan.need, WAIT_MAX, function () {
-            var rows;
+            var rows, i, own;
             if (dead) return;
             try { rows = plan.first(o); } catch (e) { log('build', e && e.stack); self.nfState('build', ''); return; }
             if (rows[0] && rows[0].line_type === 'nf-chips') chips = rows[0];
-            self.build(rows);
-            if (self.down) self.down();   // фокус на ряд 1, как multi-fan.js:564
-            afterShow();
+            for (i = 0; i < rows.length; i++) {
+              if (rows[i].nf_shelf) shelf = rows[i];
+              if (rows[i].nf_cc) ccRow = rows[i];
+            }
+            own = ownsRemote(object);
+            if (own) {
+              self.build(rows);
+              if (self.down) self.down();   // фокус на ряд 1, как multi-fan.js:564
+            } else { buildQuiet(self, object, rows); pending = true; }
+            built = true;
+            afterShow(own);
           }, function (code) { if (!dead) self.nfState(code, o.c); });
         });
       }, 0);
       return this.render();
     };
+    // Старт экрана: первый, после тихой сборки или возврат «Назад». Тихо собранный экран ставит фокус на
+    // ряд 1 только сейчас; «Мир» переписывает «Мои подборы» и недавние страны на месте, а фокус идёт
+    // за плиткой, с которой ушли (выбранная страна теперь первая).
+    comp.start = function () {
+      var d = seen, keep = d && d.__tile && (d.tile === 'country' || d.nf_shelf) ? tileKey(d) : '';
+      if (built && !dead) {
+        if (shelf) refreshShelf(shelf);
+        if (ccRow) refreshCountries(ccRow);
+      }
+      started();
+      if (!built || dead) return;
+      if (pending) { pending = false; if (comp.down) comp.down(); }
+      if (keep && tileKey(d) !== keep) refocusTile(d.tile === 'country' ? ccRow : shelf, keep);
+      if (noteLater) { noteLater = false; notices(); }
+    };
 
-    function afterShow() {
-      loadBackground();
+    // Индекс и недели мира — тихо после первого показа (§10.1); уведомления — только на видимом экране.
+    function afterShow(own) {
+      need(['index', 'global'], function (err) { if (err) catalogFailed(err); });
       refreshChips();
       unsub = onData(function (file) { if (file === 'index' || file === 'country/' + o.c) refreshChips(); });
-      notices();
+      if (own) notices(); else noteLater = true;
     }
-    // Фишка «Фильтры» показывает «…», пока нет индекса, затем число результата.
+    // Каталог не загрузился: фишка «Фильтры» — «!», одно уведомление на экран (§9), пачки 2–3 ждут
+    // следующей прокрутки (повтор не чаще RETRY_AFTER).
+    function catalogFailed(code) {
+      if (dead) return;
+      failed = true;
+      refreshChips();
+      if (failNoted || activeObj() !== object) return;
+      failNoted = true;
+      noty('Каталог не загрузился' + codeNote(code));
+    }
+    // Фишка «Фильтры» показывает «…», пока нет индекса, затем число результата; каталог не загрузился — «!».
     function refreshChips() {
       var d = chips && chips.results[0];
-      if (!d || dead || !D.index || (o.c && !D.cty[o.c])) return;
+      if (!d || dead) return;
+      if (!D.index || (o.c && !D.cty[o.c])) {
+        if (failed && d.value !== '!') { d.value = '!'; if (d.__tile) d.__tile.update(); }
+        return;
+      }
       d.value = fmtInt(countNf(o));
       if (d.__tile) d.__tile.update();
     }
@@ -2389,10 +2595,16 @@
           if (rows.length) resolve(rows); else comp.next(resolve, reject);
         }
         if (b.opt) need(b.opt, go); else go();
-      }, function () { reject(); });
+      }, function (code) { catalogFailed(code); reject(); });
     };
 
-    comp.onAppend = function (line, row) { rowEvents(line, row, object); };
+    // seen — последняя карточка или плитка в фокусе на этом экране.
+    comp.onAppend = function (line, row) {
+      var focus;
+      rowEvents(line, row, object);
+      focus = line.onFocus;
+      line.onFocus = function (card) { seen = card; if (focus) focus(card); };
+    };
 
     comp.destroy = function () {
       dead = true;
@@ -2493,7 +2705,8 @@
   // сразу, следующие 4 — через comp.next, до первой недели чарта. Недели без позиций пропускаются.
   var WEEKS_PACK = 4;
   function weeksTitle(o) { var fs = facetSummary(o); return 'История топа · ' + (o.c ? countryName(o.c) : 'Мир') + (fs ? ' · ' + fs : ''); }
-  // Плитки лет; OK — Activity.replace на последнюю неделю года. У России — только 2022 и 2021.
+  // Плитки лет; OK — Activity.replace на последнюю неделю года. У России — только 2022 и 2021. Подчёркнут
+  // год недели W; когда ряд получает пульт, фокус встаёт на него (componentWeeks), а не на первую плитку.
   function weekYearsRow(o, W) {
     var ys = years(), items = [], i, yr, n;
     for (i = ys.length - 1; i >= 0; i--) {
@@ -2507,14 +2720,15 @@
   }
   function weekKindTitle(kind, o) { var tp = o.t ? TYPE[o.t] : null; return tp && tp.list !== undefined ? tp.title : kind ? 'Сериалы' : 'Фильмы'; }
   // Ряды недели W: мир — слитые десятки с движением или один список Netflix, страна — её два списка.
-  // Подбор фильтрует позиции по тайтлу, настоящие номера остаются; хвост мирового ряда — «Все 40 →».
+  // Подбор фильтрует позиции по тайтлу, настоящие номера остаются; хвост мирового ряда — «Все 40 →»:
+  // из ряда фильмов — сетка wk<W>f, где фильмы первыми.
   function weekRows(o, W) {
     var rows = [], C = o.c ? D.cty[o.c] : null, kind, cards, n;
     for (kind = 1; kind >= 0; kind--) {
       cards = C ? countryTop(C, W, kind, o) : worldTop(W, kind, o);
       if (!cards.length) continue;
-      if (!C && hasScreen('netflix_grid') && (n = weekAllCount(o, W)) > cards.length) cards.push(tailTile('Все ' + n + ' →', '', { act: 'grid', list: 'wk' + W }));
-      rows.push(cardRow(weekLabel(W) + ' · ' + weekKindTitle(kind, o), cards, { line_type: 'nf-top' }));
+      if (!C && hasScreen('netflix_grid') && (n = weekAllCount(o, W)) > cards.length) cards.push(tailTile('Все ' + n + ' →', '', { act: 'grid', list: 'wk' + W + (kind ? '' : 'f') }));
+      rows.push(cardRow(weekLabel(W) + ' · ' + weekKindTitle(kind, o), cards, { line_type: 'nf-top', nf_wk: W }));
     }
     return rows;
   }
@@ -2530,7 +2744,8 @@
   }
   function componentWeeks(object) {
     var comp = new Lampa.InteractionMain(object), o = parseNf(object.nf), st = { cur: -1, end: 0 }, dead = false;
-    var inherited = comp.destroy ? comp.destroy.bind(comp) : function () {};
+    var inherited = comp.destroy ? comp.destroy.bind(comp) : function () {}, started = comp.start.bind(comp);
+    var built = false, pending = false, noteLater = false, years = null, target = null;
 
     comp.create = function () {
       var self = this;
@@ -2539,7 +2754,7 @@
       setTimeout(function () {
         if (dead) return;
         loadScreen(['index', 'global'].concat(o.c ? ['country/' + o.c] : []), function (err) {
-          var r, W, rows;
+          var r, W, rows, own;
           if (dead) return;
           if (err) { screenEmpty(self, err, o.c); return; }
           try {
@@ -2548,17 +2763,59 @@
             W = parseInt(object.nf_w, 10);
             W = isNaN(W) ? r[1] : Math.max(r[0], Math.min(r[1], W));
             st.cur = W; st.end = r[0];
-            rows = [weekYearsRow(o, W)].concat(weeksPack(o, st));
+            years = weekYearsRow(o, W);
+            rows = [years].concat(weeksPack(o, st));
             // Подбор не оставил ни одной позиции ни в одной неделе: подсказка вместо пустой ленты.
             if (rows.length === 1) rows.push(tileRow('Ни одной позиции под этот подбор', [{ tile: 'col', act: 'nf', nf: buildNf(withNf(emptyNf(), 'c', o.c)), title: 'Сбросить подбор', sub: o.c ? 'весь чарт: ' + countryName(o.c) : 'весь чарт мира', color: 8 }]));
+            target = focusTarget(rows, parseInt(object.nf_focus, 10), W);
           } catch (e) { log('weeks', e && e.stack); screenEmpty(self, 'build', ''); return; }
-          self.build(rows);
-          if (self.down) self.down();   // фокус на первую неделю, как multi-fan.js:564
-          notices();
+          own = ownsRemote(object);
+          if (own) self.build(rows); else buildQuiet(self, object, rows);
+          built = true;
+          if (own) { focusFirst(); notices(); } else { pending = true; noteLater = true; }
         });
       }, 0);
       return this.render();
     };
+    // Тихо собранный экран (§9) ставит фокус, только когда снова стартует.
+    comp.start = function () {
+      started();
+      if (!built || dead) return;
+      if (pending) { pending = false; focusFirst(); }
+      if (noteLater) { noteLater = false; notices(); }
+    };
+    // Неделя открыта из досье или меню карточки (nf_focus): карточка этого тайтла в ряду недели W,
+    // иначе — первая неделя, как multi-fan.js:564.
+    function focusTarget(rows, n, W) {
+      var i, p, list;
+      if (isNaN(n)) return null;
+      for (i = 1; i < rows.length; i++) {
+        if (rows[i].nf_wk !== W) continue;
+        list = rows[i].results;
+        for (p = 0; p < list.length; p++) if (list[p].nf && list[p].nf.n === n) return { ri: i, p: p, row: rows[i], line: null };
+      }
+      return null;
+    }
+    function focusFirst() {
+      var t = target, list, k, el = null, nodes;
+      target = null;
+      if (!t || !t.line) { if (comp.down) comp.down(); return; }
+      // Старый ряд рисует сначала 6–12 карточек (line.js:61-72): дорисовать до нужной.
+      list = t.row.results;
+      for (k = 0; k <= t.p && k < list.length; k++) if (!list[k].ready) t.line.append(list[k]);
+      for (k = 0; k < t.ri; k++) comp.down();
+      nodes = t.line.render(true).querySelectorAll('.selector');
+      for (k = 0; k < nodes.length && !el; k++) if (nodes[k].card_data === list[t.p]) el = nodes[k];
+      if (el) Lampa.Controller.collectionFocus(el, t.line.render(true));
+      if (Lampa.Layer && Lampa.Layer.visible) Lampa.Layer.visible(t.line.render(true));
+    }
+    // Ряд лет получает пульт — фокус на подчёркнутый год (иначе Lampa ставит его на первую плитку).
+    function focusYear(line) {
+      var list = years.results, i;
+      for (i = 0; i < list.length; i++) {
+        if (list[i].active && list[i].__tile && list[i].__tile.render(true)) { Lampa.Controller.collectionFocus(list[i].__tile.render(true), line.render(true)); return; }
+      }
+    }
     // Прокрутка вниз — шаг назад во времени (main.js:49-65). Пустую пачку не отдаём.
     comp.next = function (resolve, reject) {
       var rows = [];
@@ -2566,7 +2823,17 @@
       try { rows = weeksPack(o, st); } catch (e) { log('weeks next', e && e.stack); }
       if (rows.length) resolve(rows); else reject();
     };
-    comp.onAppend = function (line, row) { rowEvents(line, row, object); };
+    comp.onAppend = function (line, row) {
+      rowEvents(line, row, object);
+      if (row === years) line.onToggle = focusYear;
+      if (target && row === target.row) target.line = line;
+    };
+    // Неделя открыта из «Истории по неделям» досье: «Назад» возвращает в этот список (nf_ret).
+    comp.back = function () {
+      var ret = object.nf_ret;
+      Lampa.Activity.backward();
+      if (typeof ret === 'function') ret();
+    };
     comp.destroy = function () { dead = true; inherited(); };
     return comp;
   }
@@ -2577,13 +2844,11 @@
   var HALL_FIRST = 6;
   function hallTitle(o) { var fs = facetSummary(o); return 'Зал славы' + (fs ? ' · ' + fs : ''); }
   function hallRow(key, o) {
-    var list = hallFiltered(key, o), cards = [], i, more, row;
+    var list = hallFiltered(key, o), cards = [], i;
     for (i = 0; i < list.length && i < ROW_MAX; i++) cards.push(hallCard(key, list[i], false));
     if (!cards.length) return null;
-    more = list.length > ROW_MAX && hasScreen('netflix_grid');
-    row = cardRow(HALL_T[key].title, cards, { nomore: !more, nf_list: 'hall:' + key });
-    if (more) row.onMore = function () { openGrid(o, 'hall:' + key); };
-    return row;
+    if (list.length > ROW_MAX && hasScreen('netflix_grid')) cards.push(moreTail(list.length, 'hall:' + key, HALL_T[key].title));
+    return cardRow(HALL_T[key].title, cards, { nf_list: 'hall:' + key });
   }
   function hallRows(o, from, to) {
     var rows = [], i;
@@ -3109,18 +3374,25 @@
     });
   }
   // «История по неделям ›»: позиции сезонов по порядку недель; «Назад» — в досье (content_filter/menu.js:242-253).
-  // OK открывает ленту недель на этой неделе со списком Netflix, где стоял тайтл: в слитой десятке
-  // его может не быть.
-  function showWeekHistory(T, back) {
+  // OK открывает ленту недель на этой неделе со списком Netflix, где стоял тайтл (в слитой десятке
+  // его может не быть), с фокусом на его карточке; «Назад» из ленты — снова сюда, на ту же позицию (at).
+  function showWeekHistory(T, back, at) {
     var pos = titlePositions(T.n), items = [], i, p, val;
     for (i = 0; i < pos.length; i++) {
       p = pos[i];
       val = hoursLabel(p.h) + (p.W >= vf() && p.v ? ' · ' + viewsLabel(p.v) : '');
-      items.push({ title: weekLabel(p.W, { short: true }) + ' · №' + p.pl, subtitle: [seasonLong(slabel(p.sid)), LIST_SHORT[p.cat], val].filter(Boolean).join(' · '), w: p.W, cat: p.cat });
+      items.push({ title: weekLabel(p.W, { short: true }) + ' · №' + p.pl, subtitle: [seasonLong(slabel(p.sid)), LIST_SHORT[p.cat], val].filter(Boolean).join(' · '), w: p.W, cat: p.cat,
+        selected: !!at && at.w === p.W && at.cat === p.cat });
     }
     Lampa.Select.show({
       title: 'История по неделям · ' + titleName(T), items: items,
-      onSelect: function (a) { var o2 = emptyNf(); o2.t = LIST_KEYS[a.cat]; openWeeks(o2, a.w); },
+      onSelect: function (a) {
+        var o2 = emptyNf(), act;
+        o2.t = LIST_KEYS[a.cat];
+        openWeeks(o2, a.w, T.n);
+        act = activeObj();
+        if (act && act.component === 'netflix_weeks') act.nf_ret = function () { showWeekHistory(T, back, a); };
+      },
       onBack: back
     });
   }
