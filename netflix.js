@@ -2517,6 +2517,20 @@
     if (!k.ru && !k.en) return '';
     return '<div class="nf-trb' + (under ? '' : ' nf-trb--top') + '"><i></i>' + (ruAudio(k.ru) ? '<b>RU</b>' : '') + '</div>';
   }
+  // Ключи тайтла n поменялись (мёртвый ключ в TR_DEAD, поиск в TMDB): бейдж ▶ на его карточках во всех экранах
+  // рисуется заново — «▶ RU» не обещает озвучку, которой больше нет, а найденный ролик получает ▶.
+  function redrawTrailerBadges(n) {
+    var els, el, nf, view, html, i;
+    try { els = document.querySelectorAll('.card.nf-dec'); } catch (e) { return; }
+    for (i = 0; i < els.length; i++) {
+      el = els[i]; nf = el.nf_card;
+      if (!nf || nf.n !== n) continue;
+      view = $(el).find('.card__view');
+      view.find('.nf-trb').remove();
+      html = trailerBadge(nf, !!view.find('.nf-meta').length);
+      if (html) view.append(html);
+    }
+  }
   // Место, движение или бейдж, ▶ трейлера, подпись сезона, строка под названием. HTML — только через
   // jQuery: Lampa переопределяет Element.append. В рядах зовётся по событию line, в сетке (B3) — из cardRender.
   function decorateCard(el, nf) {
@@ -4002,6 +4016,7 @@
       if (token('ru')) tr.push(token('ru'));
       if (token('en')) tr.push(token('en'));
       if (tr.length || !failed) T.tr = tr.join(' ');
+      redrawTrailerBadges(n);
       list = TR_FIND[n] || [];
       delete TR_FIND[n];
       for (i = 0; i < list.length; i++) list[i](failed);
@@ -4261,7 +4276,7 @@
   // бесполезен: он играет тот же ключ (§8.6 п. 3 — только когда мост не ответил).
   function trError(S, d) {
     var it = S.items[d.i >= 0 && d.i < S.items.length ? d.i : S.idx], k = keyOf(it, d.key), gone = !!TR_GONE[d.code];
-    if (gone && d.key) TR_DEAD[d.key] = 1;
+    if (gone && d.key && !TR_DEAD[d.key]) { TR_DEAD[d.key] = 1; if (it && it.T) redrawTrailerBadges(it.T.n); }
     if (!d.fatal) {
       if (k.lang === 'ru') S.pend = 'Русская озвучка недоступна — английский';
       if (gone) trRefind(it);
