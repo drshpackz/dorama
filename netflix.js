@@ -843,7 +843,7 @@
     W = stubFirstW(T, w.y0);
     return { n: T.n, tv: T.k === 1, y0: w.y0, isNew: w.isNew, fresh: w.y0 >= (years().slice(-1)[0] || 0), cc: cc, ncc: ncc, langs: langs, lg: T.lg, season: T.k === 1 ? stubSeason(T) : 0,
       nonEn: nonEn && ncc > 0, hit: T.cb >= 1 && T.cb <= 3, d0: W >= 0 ? weekSun(W).getTime() : Date.UTC(w.y0, 11, 31), world: world, dubIn: DUB_IN.test(T.t),
-      strict: stubStrict(noVersion(T.t)), loose: looseTitle(T.t), bare: bareTitle(T.t), norm: normTitle(noVersion(T.t)), sole: false };
+      strict: stubStrict(noVersion(T.t)), loose: looseTitle(T.t), bare: bareTitle(T.t), norm: normTitle(noVersion(T.t)), sole: false, only: false };
   }
 
   // ---- Имя ----
@@ -928,10 +928,10 @@
     // Дата поиска TMDB — лишь основная: израильский «Image of Victory» (Netflix 07.2022) там 2023-го, а показан
     // на фестивале в 2021-м. Такой фильм (late) — только то же название и не позже следующего года; stubPick
     // отбрасывает его, если есть известный (≥ 20 голосов) тёзка до чарта, а выбранный проверяется по самой ранней
-    // дате выхода в любой стране (stubFind, release_dates). Сериал — по дате первой серии; позже чарта он
-    // выбирается только у тайтла мирового топа (TMDB бывает датирует премьеру Netflix эфиром позже), а у тайтла
-    // стран лишь делает выбор неоднозначным: «Teasing Master Takagi-san» Японии 03.2024 — не аниме 2018 года,
-    // раз есть японская дорама, которую TMDB датирует эфиром TBS 02.04.2024.
+    // дате выхода в любой стране (stubFind, release_dates; лучший late при таком тёзке — ещё до выбора, settle).
+    // Сериал — по дате первой серии; позже чарта он выбирается только у тайтла мирового топа (TMDB бывает датирует
+    // премьеру Netflix эфиром позже), а у тайтла стран лишь делает выбор неоднозначным: «Teasing Master Takagi-san»
+    // Японии 03.2024 — не аниме 2018 года, раз есть японская дорама, которую TMDB датирует эфиром TBS 02.04.2024.
     late = !isNaN(day) ? day > ctx.d0 : yr > new Date(ctx.d0).getUTCFullYear();
     if (late && (lv < 3 || yr > ctx.y0 + 1)) return null;
     // «RRR (Hindi)» — версия индийского фильма: кандидат — индийский фильм не старше года до чартов, не
@@ -1001,11 +1001,8 @@
   // страны («What If...» Греции: не «What If» 2014 с Рэдклиффом и не «What if...» 2010). Уровень 1 (лишнее слово)
   // проходит только со своей страной или голосами, не одним годом («Borders» Израиля — не «Borders & Lies»).
   function stubPick(cands, ctx) {
-    var top = 0, pool = [], known = [], dom = null, v3 = 0, v2 = 0, early = false, block = false, rv = [], i, a, x, c, floor;
+    var top = 0, pool = [], known = [], dom = null, v3 = 0, v2 = 0, early = stubEarly(cands, ctx), block = false, rv = [], i, a, x, c, floor;
     function sc(c) { return c.s + (c === dom ? 10 : 0); }
-    // Сериал тайтла стран, вышедший позже чарта, известным тёзкой до чарта не отбрасывается: Netflix в Японии и
-    // Корее часто показывает сериал раньше эфира, и такой кандидат лишь делает выбор неоднозначным.
-    for (i = 0; i < cands.length; i++) if (cands[i].lv === 3 && !cands[i].late && cands[i].vc >= 20 && (!ctx.tv || ctx.world)) early = true;
     for (i = 0; i < cands.length; i++) {
       if (early && cands[i].late) continue;
       if (cands[i].lv > top) top = cands[i].lv;
@@ -1043,6 +1040,13 @@
     for (i = 0; i < rv.length; i++) if (a.vc < 1000 || a.vc < 20 * rv[i].vc) return null;
     return a;
   }
+  // Есть известный (≥ 20 голосов) тёзка с тем же названием, вышедший до чарта: кандидаты позже чарта (late) не в
+  // счёт. Сериал тайтла стран, вышедший позже чарта, так не отбрасывается: Netflix в Японии и Корее часто показывает
+  // сериал раньше эфира, и такой кандидат лишь делает выбор неоднозначным.
+  function stubEarly(cands, ctx) {
+    for (var i = 0; i < cands.length; i++) if (cands[i].lv === 3 && !cands[i].late && cands[i].vc >= 20 && (!ctx.tv || ctx.world)) return true;
+    return false;
+  }
   // Детали ru-RU: фильм короче 40 минут — короткий метр; у сериала сезонов меньше, чем у Netflix (TMDB может
   // не знать идущего сезона: допуск один, у законченного или закрытого сериала — нет), — не он (Ghosts С5 — не
   // немецкие «Призраки» в один сезон, Gossip Girl С3 — не перезапуск 2021 года в два сезона).
@@ -1070,14 +1074,16 @@
     function search() {
       get('', function (list, json) {
         var cands, c;
-        ctx.sole = list.length === 1 && (json.total_results || 1) === 1;
+        ctx.sole = ctx.only = list.length === 1 && (json.total_results || 1) === 1;
         cands = stubCands(ctx, list);
         if (!cands.length && ctx.tv) { ctx.tv = false; ctx.season = 0; search(); return; }
-        // Тайтл неанглоязычных стран без своего кандидата: местный фильм года чартов часто не на первой странице
-        // поиска (словацкий «Otec» 2025 за «The Father» и десятком «Father») — второй поиск по году.
-        c = ctx.nonEn ? stubPick(cands, ctx) : null;
-        if (ctx.nonEn && (!c || !c.loc)) { byYear(cands); return; }
-        check(cands);
+        settle(cands, function () {
+          // Тайтл неанглоязычных стран без своего кандидата: местный фильм года чартов часто не на первой странице
+          // поиска (словацкий «Otec» 2025 за «The Father» и десятком «Father») — второй поиск по году.
+          c = ctx.nonEn ? stubPick(cands, ctx) : null;
+          if (ctx.nonEn && (!c || !c.loc)) { byYear(cands); return; }
+          check(cands);
+        });
       });
     }
     function byYear(cands) {
@@ -1087,30 +1093,73 @@
         more = stubCands(ctx, list);
         for (i = 0; i < cands.length; i++) seen[cands[i].r.id] = 1;
         // Из поиска по году — только свои: он ищет местный фильм, а не ещё одного безвестного тёзку.
-        for (i = 0; i < more.length; i++) if (!seen[more[i].r.id] && more[i].loc) cands.push(more[i]);
+        for (i = 0; i < more.length; i++) if (!seen[more[i].r.id] && more[i].loc) { cands.push(more[i]); ctx.only = false; }
         check(cands);
       });
     }
+    // Дата поиска TMDB — лишь основная, а известный тёзка до чарта отбрасывает всех, кого она ставит позже чарта
+    // (stubEarly): британский «Accused» (мировой топ по 01.10.2023) там 05.10.2023, а на Netflix GB он с 22.09, и
+    // его вытеснял датский «Anklaget» 2005 года. Поэтому лучший такой фильм сначала проверяется по самой ранней
+    // дате выхода (release_dates, вместе с деталями ru-RU): вышел до чарта к зрителю (кино, цифра, ТВ; не только
+    // фестиваль) — он не late. Французский «Irréductible» (англ. Employee of the Month, фестиваль 01.2022, кино
+    // 06.2022) — не «Employee of the Month» Багам 02.2022.
+    function settle(cands, next) {
+      var c = null, i;
+      if (!ctx.tv && stubEarly(cands, ctx)) for (i = 0; i < cands.length; i++) if (cands[i].late && (!c || cands[i].s > c.s)) c = cands[i];
+      if (!c) { next(); return; }
+      details(c, function () {
+        if (stubFirstDay(c.det, 2) <= ctx.d0) c.late = false;
+        next();
+      });
+    }
+    function details(c, next) {
+      if (c.det) { next(); return; }
+      STUB.net.silent(Lampa.TMDB.api((ctx.tv ? 'tv/' : 'movie/') + c.r.id + '?language=ru-RU' + (c.late && !ctx.tv ? '&append_to_response=release_dates' : '') + key), function (det) {
+        c.det = det;
+        next();
+      }, function () { done(false); }, false, { timeout: STUB_T });
+    }
     function check(cands) {
-      var c = stubPick(cands, ctx), late;
+      var c = stubPick(cands, ctx);
       if (!c) { done(null); return; }
-      late = c.late && !ctx.tv;
-      STUB.net.silent(Lampa.TMDB.api((ctx.tv ? 'tv/' : 'movie/') + c.r.id + '?language=ru-RU' + (late ? '&append_to_response=release_dates' : '') + key), function (det) {
-        if (stubDetailsOk(ctx, det) && !(late && !(stubFirstDay(det) <= ctx.d0))) { done(stubEntry(c.r, det, ctx.tv, c.yr)); return; }
+      details(c, function () {
+        if (stubDetailsOk(ctx, c.det) && stubOnTime(ctx, c)) { done(stubEntry(c.r, c.det, ctx.tv, c.yr)); return; }
         if (++tries > 1) { done(null); return; }
         cands.splice(cands.indexOf(c), 1);
         check(cands);
-      }, function () { done(false); }, false, { timeout: STUB_T });
+      });
     }
   }
-  // Самая ранняя дата выхода фильма в любой стране (фестиваль, кино, цифра) из release_dates; нет — NaN.
-  function stubFirstDay(det) {
+  // Фильм, который TMDB датирует позже чарта (late), — он, если вышел до чарта хоть где-то (release_dates) или если
+  // другого фильма с этим названием TMDB не знает (only: единственный ответ поиска по имени) и сам числит его
+  // выпуском Netflix: «Untold: Caitlyn Jenner» (Исландия и Ирландия, неделя по 29.08.2021) у TMDB везде
+  // 24.08.2022 — на год позже.
+  function stubOnTime(ctx, c) {
+    if (!c.late || ctx.tv) return true;
+    return stubFirstDay(c.det, 1) <= ctx.d0 || (ctx.only && stubOnNetflix(c.det));
+  }
+  // Самая ранняя дата выхода фильма в любой стране из release_dates, вида не ниже type (1 — и премьера на
+  // фестивале, 2 — кино, цифра, диск, ТВ); нет — NaN.
+  function stubFirstDay(det, type) {
     var list = (det && det.release_dates && det.release_dates.results) || [], best = NaN, i, j, ds, d;
     for (i = 0; i < list.length; i++) {
       ds = (list[i] && list[i].release_dates) || [];
-      for (j = 0; j < ds.length; j++) { d = parseDay(ds[j] && ds[j].release_date); if (!isNaN(d) && !(d >= best)) best = d; }
+      for (j = 0; j < ds.length; j++) {
+        if (!ds[j] || ds[j].type < type) continue;
+        d = parseDay(ds[j].release_date);
+        if (!isNaN(d) && !(d >= best)) best = d;
+      }
     }
     return best;
+  }
+  // В release_dates есть выпуск с пометкой Netflix.
+  function stubOnNetflix(det) {
+    var list = (det && det.release_dates && det.release_dates.results) || [], i, j, ds;
+    for (i = 0; i < list.length; i++) {
+      ds = (list[i] && list[i].release_dates) || [];
+      for (j = 0; j < ds.length; j++) if (/netflix/i.test((ds[j] && ds[j].note) || '')) return true;
+    }
+    return false;
   }
   function stubEntry(r, det, tv, yr) {
     var e = { id: r.id, mt: tv ? 1 : 0, p: (det && det.poster_path) || r.poster_path || '', yr: yr,
