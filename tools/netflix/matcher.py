@@ -103,6 +103,11 @@ def score(row, c, kind):
             if rd and abs((rd - date).days) <= 4:
                 s += 0.3
                 why.append('www-release')
+        # An obscure film (< 100 votes) more than 15 years older than its first week does not get into the
+        # global top 10: it is a namesake (The Man from Toronto 1933, 365 Days 1922, Mary, Mother of Jesus 1999).
+        if kind == 'movie' and gap > 15 * 365 and row['lang'] in (0, 1) and (c.get('vote_count') or 0) < 100:
+            s -= 0.3
+            why.append('old-obscure')
     ol = c.get('original_language') or ''
     if row['lang'] == 0:
         s += 0.15 if ol == 'en' else -0.3
@@ -145,7 +150,21 @@ def match(row, client):
         return [(media, c) for c in res.get('results') or [] if c.get('id')]
 
     def best_of(cs):
-        return sorted(((score(row, c, k)[0], k, c) for k, c in cs), key=lambda x: -x[0])
+        sc = [(score(row, c, k)[0], k, c) for k, c in cs]
+        fw = d2(row['first_week'])
+        # A known namesake film (>= 50 votes) from around the first chart week (3 years before to 13 months
+        # after: TMDB often dates a Netflix film by a later release) pushes films more than 15 years older
+        # down: 365 Days 2020 over 1922, River Wild 2023 over Wild River 1960, Bullet Train Explosion 2025 over 1975.
+        def date(c):
+            return d2(c.get('release_date') or c.get('first_air_date') or '')
+        recent = fw is not None and any(
+            k == 'movie' and date(c) is not None and -3 * 365 <= (date(c) - fw).days <= 400
+            and (c.get('vote_count') or 0) >= 50
+            and tsim(row['title'], [_name(c), c.get('original_title')]) >= 0.9 for k, c in cs)
+        if recent:
+            sc = [(round(s - 0.3, 3) if k == 'movie' and date(c) is not None and (fw - date(c)).days > 15 * 365 else s, k, c)
+                  for s, k, c in sc]
+        return sorted(sc, key=lambda x: -x[0])
 
     cands = search(row['title'], kind)
     sc = best_of(cands)
