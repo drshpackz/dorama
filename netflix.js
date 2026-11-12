@@ -1123,7 +1123,7 @@
   // Ряды, о которых сказало событие line (ещё не созданные карточки), и карточки в DOM всех экранов:
   // card_data, .card__title, .card__img (если картинка уже грузилась; иначе Lampa возьмёт poster_path сама).
   function refreshStubCards() {
-    var dirty = STUB.dirty || {}, els, el, img, tl, vote, src, c, T, i, j, d;
+    var dirty = STUB.dirty || {}, upd = [], els, el, img, tl, vote, src, c, T, i, j, d;
     STUB.dirty = null;
     for (i = 0; i < STUB.rows.length; i++) {
       d = STUB.rows[i];
@@ -1152,7 +1152,7 @@
       d = STUB.cd[i];
       if (!weekData(d.W)) continue;
       src = countdownSub(worldTop(d.W, d.kind));
-      if (src && src !== d.sub) { d.sub = src; if (d.__tile) d.__tile.update(); }
+      if (src && src !== d.sub) { d.sub = src; upd.push(d); if (d.__tile) d.__tile.update(); }
     }
     // Плитки «Сейчас №1 по странам» (и ещё не нарисованные): №1 страны — найденная заглушка — получает постер и
     // русское название.
@@ -1161,8 +1161,21 @@
       c = d.code && D.home && D.home.c && D.home.c[d.code];
       if (!c || !c[1] || !c[1].length || !dirty[owner(c[1][0])]) continue;
       countryTile(d.code, d);
+      upd.push(d);
       if (d.__tile) d.__tile.update();
     }
+    refocusStrip(dirty, upd);
+  }
+  // Карточка или плитка в фокусе переписана на месте — полоса фактов под ней тоже (иначе до следующего фокуса
+  // в ней оставалось бы английское имя заглушки).
+  function refocusStrip(dirty, upd) {
+    var obj = activeObj(), el, c;
+    if (!obj || !obj.activity) return;
+    try { el = obj.activity.render().find('.focus')[0]; } catch (e) { return; }
+    if (!el) return;
+    c = el.card_data;
+    if (c && c.nf && dirty[c.nf.n]) { focusLine(c, obj); return; }
+    if (el.nf_tile && upd.indexOf(el.nf_tile) >= 0) focusLine(el.nf_tile, obj);
   }
   // Событие line рядов плагина: заглушки ряда (первые ROW_MAX) — в очередь, видимый ряд — вперёд.
   function stubLine(e) {
