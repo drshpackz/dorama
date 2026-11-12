@@ -3240,9 +3240,17 @@
   // netflix_filter — последний подбор главного экрана для плитки «↩ Прошлый подбор» (§4.6). netflix_sort здесь
   // не пишется: его пишут только значок «Сортировка» в шапке и одноимённый раздел сводного меню — иначе подборка
   // вроде «Рекорды №1» (s=streak) навсегда сортировала бы каждый следующий вход.
+  // Подбор с 0 результатов не запоминается (§5.2.1: плитка повторяет последний полезный подбор).
   function remember(o, canon, mode) {
-    if (mode !== 'world') storageSet('netflix_filter', canon);
+    if (mode !== 'world' && useful(o)) storageSet('netflix_filter', canon);
     if (o.c) addRecent(o.c);
+  }
+  // Подбор что-то показал: страна — всегда (её чарт), подбор — если есть хоть один тайтл.
+  function useful(o) {
+    var mode = nfMode(o);
+    if (mode === 'world') return false;
+    if (mode === 'country') return true;
+    try { return countNf(o) > 0; } catch (e) { return false; }
   }
   function ctlName() { try { return (Lampa.Controller.enabled() || {}).name || ''; } catch (e) { return ''; } }
   // Слой ожидания: Lampa.Loading (interaction/loading.js) — подпись со значком внизу экрана, ряды под ним видны,
@@ -3437,7 +3445,6 @@
       var self = this;
       this.activity.loader(true);
       D.err = {};   // новый экран или «Обновить» — упавшие файлы пробуем заново
-      if (nfMode(o) !== 'world') addFilterHist(buildNf(o));   // «Мои подборы» (§5.2.1)
       // Всегда через setTimeout: при данных в памяти boot отвечает сразу, а build и down() должны идти
       // после старта активности, как в multi-fan.
       setTimeout(function () {
@@ -3449,6 +3456,7 @@
             var rows, i, own;
             if (dead) return;
             try { rows = plan.first(o); } catch (e) { log('build', e && e.stack); self.nfState('build', ''); return; }
+            if (useful(o)) addFilterHist(buildNf(o));   // «Мои подборы» (§5.2.1): только подбор с результатами
             if (rows[0] && rows[0].line_type === 'nf-chips') chips = rows[0];
             for (i = 0; i < rows.length; i++) {
               if (rows[i].nf_shelf) shelf = rows[i];
