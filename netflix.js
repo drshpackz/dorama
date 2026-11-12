@@ -674,7 +674,7 @@
   // (refreshStubCards). Ищется то, что на экране: home, ряды по событию line (видимые — первыми),
   // сетки и две последние недели открытой страны. Совпадение берётся только явное (stubPick), промах
   // повторяется раз в неделю, находка перепроверяется через 30 дней. Сеть упала — пауза на сессию.
-  var STUB_KEY = 'netflix_stub_tmdb4', STUB_OLD = ['netflix_stub_tmdb', 'netflix_stub_tmdb2', 'netflix_stub_tmdb3'], STUB_MAX = 500, STUB_PAR = 4, STUB_T = 8000;
+  var STUB_KEY = 'netflix_stub_tmdb5', STUB_OLD = ['netflix_stub_tmdb', 'netflix_stub_tmdb2', 'netflix_stub_tmdb3', 'netflix_stub_tmdb4'], STUB_MAX = 500, STUB_PAR = 4, STUB_T = 8000;
   var STUB_RETRY = 7 * DAY;          // промах ищется снова не раньше
   var STUB_LIFE = 30 * DAY;          // находка перепроверяется (постер и русское название приходят позже)
   var STUB_THIN = 3 * DAY;           // находка без постера или русского названия — раньше
@@ -742,15 +742,20 @@
 
   // ---- Что известно о заглушке: год попадания в топ, новинка ли, страны и языки, номер сезона ----
   // Год — первый год с заметными очками (≥ 3 и ≥ 2 % лучшего: пара недель тёзки давно не в счёт) или год первой
-  // недели в мировом топе. Новинка — тайтл мирового топа, впервые попавший в него не раньше 8 недель назад (и без
-  // заметных очков в прошлые годы): мировой топ — почти всегда премьеры. В чартах стран старое кино — обычное дело.
+  // недели в мировом топе. Нет заметного года (одна неделя №10, как «Guru» ОАЭ 03.2023) — первый год, где тайтл
+  // вообще был в чартах стран (py — очки его настоящих недель), а не текущий: иначе первая неделя чартов ищется
+  // в этом году и фильм, вышедший через три года после чарта, проходит. Новинка — тайтл мирового топа, впервые
+  // попавший в него не раньше 8 недель назад (и без заметных очков в прошлые годы): мировой топ — почти всегда
+  // премьеры. В чартах стран старое кино — обычное дело.
   function stubWhen(T) {
-    var ys = years(), py = T.py || [], max = 0, first = -1, last = ys.length - 1, gy = 0, y0, i;
+    var ys = years(), py = T.py || [], max = 0, first = -1, any = -1, last = ys.length - 1, gy = 0, y0, i;
     for (i = 0; i < py.length; i++) if (py[i] > max) max = py[i];
     for (i = 0; i < py.length; i++) if (py[i] >= 3 && py[i] >= max / 50) { first = i; break; }
+    for (i = 0; i < py.length; i++) if (py[i] > 0) { any = i; break; }
     if (typeof T.gf === 'number' && T.gf >= 0) gy = weekYear(T.gf);
     y0 = first >= 0 ? ys[first] || 0 : 0;
     if (gy && (!y0 || gy < y0)) y0 = gy;
+    if (!y0 && any >= 0) y0 = ys[any] || 0;
     if (!y0) y0 = ys[last] || new Date().getFullYear();
     return { y0: y0, isNew: !!gy && T.gf >= lastW() - 8 && (first < 0 || first === last) };
   }
@@ -826,8 +831,10 @@
   // nonEn — тайтл только из чартов стран (не был в мировом топе), и все его страны неанглоязычные: английский
   // фильм без своей страны и языка для него — чужой тёзка (fg). hit — был №1–3 в какой-то стране. d0 — день
   // первой недели в чартах (воскресенье; неизвестна — конец года y0): кандидат, вышедший позже, — не он.
+  // world — был в мировом топе. bare — свободное имя без приставки автора («Anne Rice's Mayfair Witches»).
+  // dubIn — версия индийского фильма на другом языке («RRR (Hindi)»).
   function stubCtx(T) {
-    var w = stubWhen(T), cc = stubPlaces(T), langs = {}, ncc = 0, nonEn = !(typeof T.gf === 'number' && T.gf >= 0), k, l, i, W;
+    var world = typeof T.gf === 'number' && T.gf >= 0, w = stubWhen(T), cc = stubPlaces(T), langs = {}, ncc = 0, nonEn = !world, k, l, i, W;
     for (k in cc) if (cc.hasOwnProperty(k)) {
       ncc++; l = countryLangs(k);
       if (!l.length || EN_MIXED[k]) nonEn = false;
@@ -835,14 +842,18 @@
     }
     W = stubFirstW(T, w.y0);
     return { n: T.n, tv: T.k === 1, y0: w.y0, isNew: w.isNew, fresh: w.y0 >= (years().slice(-1)[0] || 0), cc: cc, ncc: ncc, langs: langs, lg: T.lg, season: T.k === 1 ? stubSeason(T) : 0,
-      nonEn: nonEn && ncc > 0, hit: T.cb >= 1 && T.cb <= 3, d0: W >= 0 ? weekSun(W).getTime() : Date.UTC(w.y0, 11, 31),
-      strict: stubStrict(noVersion(T.t)), loose: looseTitle(T.t), norm: normTitle(noVersion(T.t)), sole: false };
+      nonEn: nonEn && ncc > 0, hit: T.cb >= 1 && T.cb <= 3, d0: W >= 0 ? weekSun(W).getTime() : Date.UTC(w.y0, 11, 31), world: world, dubIn: DUB_IN.test(T.t),
+      strict: stubStrict(noVersion(T.t)), loose: looseTitle(T.t), bare: bareTitle(T.t), norm: normTitle(noVersion(T.t)), sole: false };
   }
 
   // ---- Имя ----
   function normTitle(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9À-ɏЀ-ӿ]+/g, ''); }
-  // Без хвоста дубляжа Netflix: «The Suicide Squad (Dubbed Version)», «… (Castilian version)».
-  function noVersion(s) { return String(s || '').replace(/\s*\((?:[^()]*\s)?(?:version|versión|dubbed|dub)\)\s*$/i, ''); }
+  // Без хвоста дубляжа Netflix: «The Suicide Squad (Dubbed Version)», «… (Castilian version)», «RRR (Hindi)»,
+  // «Kantara (Hindi)», «Salaar (English)» — с хвостом поиск TMDB не находит ничего. Хвост индийского языка
+  // (DUB_IN) — версия свежего индийского фильма: Netflix так помечает только их.
+  var DUB_IN = /\((?:hindi|tamil|telugu|malayalam|kannada|marathi|bengali|punjabi|gujarati)\)\s*$/i;
+  var DUB_TAIL = /\s*\((?:(?:[^()]*\s)?(?:version|versión|dubbed|dub)|hindi|tamil|telugu|malayalam|kannada|marathi|bengali|punjabi|gujarati|english)\)\s*$/i;
+  function noVersion(s) { return String(s || '').replace(DUB_TAIL, ''); }
   // Свободно: без знаков, без артикля в начале (School of Rock = The School of Rock), числа словами — цифрами
   // (Ocean's 8 = Ocean's Eight), без хвоста дубляжа.
   var NUM_WORD = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12 };
@@ -850,6 +861,19 @@
     var x = noVersion(s).toLowerCase().replace(/^\s*(?:the|a|an)\s+/, '');
     x = x.replace(/\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/g, function (w) { return String(NUM_WORD[w]); });
     return normTitle(x);
+  }
+  // Без приставки автора или франшизы: «Anne Rice's Mayfair Witches» → Mayfair Witches, «Dr. Seuss' The Lorax» →
+  // The Lorax, «Tyler Perry's A Madea Family Funeral». Остаток — от двух слов (Ocean's Eight, Schindler's List и
+  // Grey's Anatomy — не приставка; It's Okay to Not Be Okay и Let's Get Married — не автор), иначе ''.
+  function bareTitle(s) {
+    var w = noVersion(s).split(/\s+/), i;
+    if (!/^[A-ZÀ-Þ]/.test(w[0] || '')) return '';
+    for (i = 0; i < 4 && i < w.length - 2; i++) {
+      if (!/(?:['’]s|s['’])$/.test(w[i])) continue;
+      if (!i && /^(?:it|that|let|here|there|what|who|he|she|where|how|when|why|today|tonight|everybody|everyone|nobody|somebody|someone|one)['’]s$/i.test(w[0])) return '';
+      return looseTitle(w.slice(i + 1).join(' '));
+    }
+    return '';
   }
   // Строго: без пробелов и обычной пунктуации, но «!», «#», «?», «&» и многоточие значимы (Heist! и #Unknown —
   // другие фильмы; греческий «What If...» 2012 — не «What If» 2014 с Рэдклиффом).
@@ -879,6 +903,8 @@
       l = looseTitle(names[i]);
       if (!l || !ctx.loose) continue;
       if (l === ctx.loose) { best = Math.max(best, 2); continue; }
+      // Приставка автора с любой стороны: «Anne Rice's Mayfair Witches» — это «Mayfair Witches».
+      if ((ctx.bare && l === ctx.bare) || bareTitle(names[i]) === ctx.loose) { best = Math.max(best, 2); continue; }
       // Пояснение в скобках у TMDB: «LOL (Laughing Out Loud)» — это «LOL».
       if ((n = /^(.+?)\s*\([^()]+\)\s*$/.exec(names[i])) && looseTitle(n[1]) === ctx.loose) { best = Math.max(best, 2); continue; }
       a = l.length < ctx.loose.length ? l : ctx.loose;
@@ -897,12 +923,20 @@
     var date = String((ctx.tv ? r.first_air_date : r.release_date) || ''), yr = parseInt(date.slice(0, 4), 10) || 0, day = parseDay(date);
     var d = yr ? ctx.y0 - yr : 99, dd, vc = r.vote_count || 0, ol = r.original_language || '', oc = r.origin_country || [];
     var loc = false, bad = false, late, s = 0, i;
-    // Вышел позже первой недели в чартах (допуск 14 дней) — почти всегда не он: «Love Song» Дании 10.2021 — не
-    // «A Love Song» 07.2022. Бывает, TMDB датирует фильм Netflix позже (Untold: Caitlyn Jenner, 08.2021 → 2022):
-    // такой кандидат (late) — только то же название и не позже следующего года, и stubPick отбрасывает его, если
-    // есть известный (≥ 20 голосов) тёзка до чарта («The Three Musketeers» Исландии 07.2022 — не фильм 2023-го).
-    late = !isNaN(day) ? day > ctx.d0 + 14 * DAY : yr > new Date(ctx.d0).getUTCFullYear();
+    // Вышел позже недели, когда тайтл впервые попал в чарты (d0 — её воскресенье), — не он: «Love Song» Дании
+    // 10.2021 — не «A Love Song» 07.2022, «Street Fighter» Кипра (неделя по 11.10.2026) — не фильм 13.10.2026.
+    // Дата поиска TMDB — лишь основная: израильский «Image of Victory» (Netflix 07.2022) там 2023-го, а показан
+    // на фестивале в 2021-м. Такой фильм (late) — только то же название и не позже следующего года; stubPick
+    // отбрасывает его, если есть известный (≥ 20 голосов) тёзка до чарта, а выбранный проверяется по самой ранней
+    // дате выхода в любой стране (stubFind, release_dates). Сериал — по дате первой серии; позже чарта он
+    // выбирается только у тайтла мирового топа (TMDB бывает датирует премьеру Netflix эфиром позже), а у тайтла
+    // стран лишь делает выбор неоднозначным: «Teasing Master Takagi-san» Японии 03.2024 — не аниме 2018 года,
+    // раз есть японская дорама, которую TMDB датирует эфиром TBS 02.04.2024.
+    late = !isNaN(day) ? day > ctx.d0 : yr > new Date(ctx.d0).getUTCFullYear();
     if (late && (lv < 3 || yr > ctx.y0 + 1)) return null;
+    // «RRR (Hindi)» — версия индийского фильма: кандидат — индийский фильм не старше года до чартов, не
+    // французский «Raw» 2017 для «Raw (Hindi)» 2022 и не «Sir» 2018 для «Sir (Hindi)» 2023.
+    if (ctx.dubIn && (countryLangs('IN').indexOf(ol) < 0 || (yr && yr < ctx.y0 - 1))) return null;
     if (d < 0) d = 0;
     // Тот же id у другого тайтла Netflix в индексе — не он («Father» Словакии — не «The Father» с Хопкинсом).
     if (stubTaken(ctx, r)) return null;
@@ -967,9 +1001,11 @@
   // страны («What If...» Греции: не «What If» 2014 с Рэдклиффом и не «What if...» 2010). Уровень 1 (лишнее слово)
   // проходит только со своей страной или голосами, не одним годом («Borders» Израиля — не «Borders & Lies»).
   function stubPick(cands, ctx) {
-    var top = 0, pool = [], known = [], dom = null, v3 = 0, v2 = 0, early = false, block = false, i, a, x, c, floor;
+    var top = 0, pool = [], known = [], dom = null, v3 = 0, v2 = 0, early = false, block = false, rv = [], i, a, x, c, floor;
     function sc(c) { return c.s + (c === dom ? 10 : 0); }
-    for (i = 0; i < cands.length; i++) if (cands[i].lv === 3 && !cands[i].late && cands[i].vc >= 20) early = true;
+    // Сериал тайтла стран, вышедший позже чарта, известным тёзкой до чарта не отбрасывается: Netflix в Японии и
+    // Корее часто показывает сериал раньше эфира, и такой кандидат лишь делает выбор неоднозначным.
+    for (i = 0; i < cands.length; i++) if (cands[i].lv === 3 && !cands[i].late && cands[i].vc >= 20 && (!ctx.tv || ctx.world)) early = true;
     for (i = 0; i < cands.length; i++) {
       if (early && cands[i].late) continue;
       if (cands[i].lv > top) top = cands[i].lv;
@@ -988,19 +1024,23 @@
     if (known.length === 1 && known[0].vc >= 100) dom = known[0];
     pool.sort(function (p, q) { return sc(q) - sc(p) || q.vc - p.vc; });
     a = pool[0];
+    if (a.late && ctx.tv && !ctx.world) return null;
     // Язык TMDB против списка Netflix (англ. / не англ.) у одиночки — отказ, если только не то же имя и год.
     if (a.bad && pool.length === 1 && !(a.lv === 3 && a.dd <= 1)) return null;
     if (block && !a.loc) return null;
     floor = a.dd > 15 ? 100 : 20;
     if (a.lv === 1 && !a.loc && (ctx.tv || a.vc < (a.dd <= 1 ? 20 : Math.max(floor, 50)))) return null;
     if (!(a.dd <= 1 || (a.loc && (!a.yr || a.dd <= 40 || a.vc >= 50)) || (a.lv >= 2 && a.vc >= floor) || (a.lv === 1 && !ctx.tv && a.vc >= Math.max(floor, 50)))) return null;
-    if (pool.length === 1) return a;
-    for (i = 1; i < pool.length; i++) {
-      x = pool[i];
+    // Соперники лучшего — остальные; у вышедшего до чарта — только тоже вышедшие до чарта: тёзка, которого TMDB
+    // датирует позже (late), не делает выбор неоднозначным (израильский «Forgiveness» 2019 против пустышки 2024-го).
+    for (i = 1; i < pool.length; i++) if (a.late || !pool[i].late) rv.push(pool[i]);
+    if (!rv.length) return a;
+    for (i = 0; i < rv.length; i++) {
+      x = rv[i];
       if (x.vc >= 50 && a.vc < 5 * x.vc && !(a.dd <= 1 && x.dd > 1) && !(a.loc && !x.loc)) return null;
     }
-    if (sc(a) - sc(pool[1]) >= 15) return a;
-    for (i = 1; i < pool.length; i++) if (a.vc < 1000 || a.vc < 20 * pool[i].vc) return null;
+    if (sc(a) - sc(rv[0]) >= 15) return a;
+    for (i = 0; i < rv.length; i++) if (a.vc < 1000 || a.vc < 20 * rv[i].vc) return null;
     return a;
   }
   // Детали ru-RU: фильм короче 40 минут — короткий метр; у сериала сезонов меньше, чем у Netflix (TMDB может
@@ -1052,15 +1092,25 @@
       });
     }
     function check(cands) {
-      var c = stubPick(cands, ctx);
+      var c = stubPick(cands, ctx), late;
       if (!c) { done(null); return; }
-      STUB.net.silent(Lampa.TMDB.api((ctx.tv ? 'tv/' : 'movie/') + c.r.id + '?language=ru-RU' + key), function (det) {
-        if (stubDetailsOk(ctx, det)) { done(stubEntry(c.r, det, ctx.tv, c.yr)); return; }
+      late = c.late && !ctx.tv;
+      STUB.net.silent(Lampa.TMDB.api((ctx.tv ? 'tv/' : 'movie/') + c.r.id + '?language=ru-RU' + (late ? '&append_to_response=release_dates' : '') + key), function (det) {
+        if (stubDetailsOk(ctx, det) && !(late && !(stubFirstDay(det) <= ctx.d0))) { done(stubEntry(c.r, det, ctx.tv, c.yr)); return; }
         if (++tries > 1) { done(null); return; }
         cands.splice(cands.indexOf(c), 1);
         check(cands);
       }, function () { done(false); }, false, { timeout: STUB_T });
     }
+  }
+  // Самая ранняя дата выхода фильма в любой стране (фестиваль, кино, цифра) из release_dates; нет — NaN.
+  function stubFirstDay(det) {
+    var list = (det && det.release_dates && det.release_dates.results) || [], best = NaN, i, j, ds, d;
+    for (i = 0; i < list.length; i++) {
+      ds = (list[i] && list[i].release_dates) || [];
+      for (j = 0; j < ds.length; j++) { d = parseDay(ds[j] && ds[j].release_date); if (!isNaN(d) && !(d >= best)) best = d; }
+    }
+    return best;
   }
   function stubEntry(r, det, tv, yr) {
     var e = { id: r.id, mt: tv ? 1 : 0, p: (det && det.poster_path) || r.poster_path || '', yr: yr,
@@ -1195,12 +1245,14 @@
   }
 
   // ---- Найденное — в уже нарисованные карточки ----
-  // Данные карточки: id, постер, рейтинг, русское название (у сериала — name и title, Lampa дублирует).
+  // Данные карточки: id, постер, рейтинг, русское название (у сериала — name и title, Lampa дублирует), подпись
+  // «Netflix» тайтлового списка — «2019 · США», как у карточки, сразу построенной из найденного.
   function stubPatch(c, T) {
     var name;
     if (!c || !T || !T.id || c.id) return false;
     name = titleName(T);
     c.id = T.id;
+    if (c.nf && c.nf.age === AGE_STUB) c.nf.age = listAge(T);
     if (T.p) c.poster_path = T.p;
     if (T.va) c.vote_average = T.va / 10;
     if (isTv(T)) {
@@ -1244,6 +1296,8 @@
       if (c.id !== T.id) continue;
       tl = el.querySelector('.card__title');
       if (tl) tl.textContent = titleName(T);
+      tl = el.querySelector('.card__age');
+      if (tl && c.nf.age != null && tl.textContent !== c.nf.age) tl.textContent = c.nf.age;
       // Рейтинг — как interaction/card/module/ratting.js при создании карточки.
       if (T.va && !el.querySelector('.card__vote') && (tl = el.querySelector('.card__view'))) {
         vote = document.createElement('div');
@@ -1820,9 +1874,11 @@
     v = wa ? T.gb : (x.best < 99 ? x.best : 0); w = wa ? T.gw : x.wk;
     return v ? '№' + v + ' · ' + (w || 0) + ' нед.' : '';
   }
-  // Подпись в тайтловых списках (§7): «2021 · Корея», без TMDB — «Netflix».
+  // Подпись в тайтловых списках (§7): «2021 · Корея», без TMDB — «Netflix» (AGE_STUB: найденная потом заглушка
+  // меняет её на месте, stubPatch).
+  var AGE_STUB = 'Netflix';
   function listAge(T) {
-    if (!T.id) return 'Netflix';
+    if (!T.id) return AGE_STUB;
     return [T.yr ? String(T.yr) : '', T.oc ? countryShort(T.oc) : ''].filter(Boolean).join(' · ');
   }
   // Карточка тайтлового списка (ряд или сетка): бейдж сортировки и «2021 · Корея».
@@ -2889,10 +2945,11 @@
       clearTimeout(timer);
       if (activeObj() !== act) return;   // ушли с экрана, пока искали
       if (found && T.id) { stubPatch(card, T); openTitle(card); }
-      else searchTitle(T.t);
+      else searchTitle(noVersion(T.t));
     }
-    // Недавний промах или TMDB недоступен — сразу поиск Lampa, без ожидания.
-    if (stubDown() || (e && !e.id && Date.now() - (e.at || 0) < STUB_RETRY)) { searchTitle(T.t); return; }
+    // Недавний промах или TMDB недоступен — сразу поиск Lampa, без ожидания (без хвоста «(Hindi)»: с ним Lampa не
+    // находит ничего).
+    if (stubDown() || (e && !e.id && Date.now() - (e.at || 0) < STUB_RETRY)) { searchTitle(noVersion(T.t)); return; }
     noty('Ищу в TMDB…');
     timer = setTimeout(function () { finish(false); }, STUB_OPEN_WAIT);
     stubNow(T, finish);
@@ -4806,6 +4863,7 @@
     var c = makeCard(T, data.nf ? data.nf.sid : null), st = null, k, i, it;
     for (k in c) if (c.hasOwnProperty(k) && k !== 'nf') data[k] = c[k];
     if (c.title) { delete data.name; delete data.original_name; delete data.first_air_date; }
+    if (data.nf && data.nf.age === AGE_STUB) data.nf.age = listAge(T);
     try { st = Lampa.Favorite.check(data); } catch (e) {}
     if (!st) return;
     for (i = 0; i < menu.length; i++) {
