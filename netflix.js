@@ -2498,7 +2498,7 @@
     else if (/^91 день · /.test(nf.age || '')) {
       // «Лучшие за всё время»: бейдж — просмотры (в сетке «№3 · 230,9 млн»), подпись — часы за 91 день.
       x = /^(?:№(\d+) · )?(.*)$/.exec(String(nf.meta || ''));
-      parts.push('рейтинг Netflix за всё время' + (nf.rank || x[1] ? ': №' + (nf.rank || x[1]) : '') + ' · ' + x[2] + ' просм. и ' + nf.age.slice(10) + ' за первые 91 день');
+      parts.push('рейтинг Netflix за всё время' + (nf.rank || x[1] ? ': №' + (nf.rank || x[1]) : '') + ' · ' + x[2].replace(/\s*просм\.$/, '') + ' просм. и ' + nf.age.slice(10) + ' за первые 91 день');
     } else if (nf.age) parts.push(nf.age + (/^\d{4}$/.test(nf.meta || '') ? ' ' + nf.meta : ''));
     now = nf.wk == null || nf.wk === lastW();
     if (!hk && !now && (nf.pl || nf.cpl)) parts.push(weekLabel(nf.wk, { short: true }));
