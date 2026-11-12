@@ -3585,10 +3585,44 @@
   function startLater(comp, object) {
     if (activeObj() === object) Lampa.Controller.add('content', { invisible: true, toggle: function () { comp.start(); }, back: function () { Lampa.Activity.backward(); } });
   }
+  // Пачки comp.next. Lampa зовёт onEnd из одноразового обработчика конца анимации прокрутки (scroll.js
+  // startScroll), а его первым съедает всплывший transitionend фишки, уходящей из фокуса, — в первые 300 мс
+  // после создания скролла (time_call_end) он отбрасывается, и onEnd не будет. Прокрутку же, что уже у края,
+  // ↓ не двигает, и onEnd Lampa не зовёт вовсе (isFilled). Экран из двух рядов («Индия · 292») так и не
+  // получал пачку 2. Поэтому край после каждого ↓ проверяет сам экран — по правилу isEnd (end_ratio 1.5
+  // у InteractionMain); второй запрос, пока идёт первый, loadNext не пускает (next_wait).
+  function loadAtEnd(comp, isDead) {
+    var down = comp.down;
+    if (!down) return;
+    comp.down = function () {
+      down.apply(comp, arguments);
+      if (!isDead() && comp.loadNext && scrollAtEnd(comp.render(true))) comp.loadNext();
+    };
+  }
+  function vScroll(root) { return root && root.querySelector ? root.querySelector('.scroll:not(.scroll--horizontal)') : null; }
+  function scrollAtEnd(root) {
+    var sc = vScroll(root), body = sc && sc.querySelector('.scroll__body'), h, b, m, pos;
+    if (!body || !(h = sc.offsetHeight)) return false;
+    b = body.offsetHeight;
+    m = /translate3d\(\s*-?[\d.]+px,\s*(-?[\d.]+)px/.exec(body.style.webkitTransform || body.style.transform || '');
+    pos = m ? Math.abs(parseFloat(m[1])) : sc.scrollTop;
+    return b < h || b - h * 1.5 < pos;
+  }
   function componentNetflix(object) {
     var comp = new Lampa.InteractionMain(object), o = parseNf(object.nf), plan = planScreen(o), next = 0, dead = false, unsub = null, chips = null;
-    var inherited = comp.destroy ? comp.destroy.bind(comp) : function () {}, started = comp.start.bind(comp);
+    var inherited = comp.destroy ? comp.destroy.bind(comp) : function () {}, started = comp.start.bind(comp), build0 = comp.build;
     var built = false, pending = false, noteLater = false, failed = false, failNoted = false, shelf = null, ccRow = null, seen = null;
+
+    loadAtEnd(comp, function () { return dead; });
+    // Короткий экран (фишки и один ряд «Старое кино в топе») не даёт прокрутке поднять ряд 1 к шапке: она
+    // упирается в высоту содержимого, и фишки остаются наполовину под шапкой. Тело скролла — не ниже экрана
+    // с рядом фишек (nf-scr-body).
+    comp.build = function (rows) {
+      var sc;
+      build0.call(this, rows);
+      sc = vScroll(this.render(true));
+      if (sc) $(sc).find('.scroll__body').first().addClass('nf-scr-body');
+    };
 
     comp.create = function () {
       var self = this;
@@ -3878,6 +3912,7 @@
     var inherited = comp.destroy ? comp.destroy.bind(comp) : function () {}, started = comp.start.bind(comp);
     var built = false, pending = false, noteLater = false, years = null, target = null;
 
+    loadAtEnd(comp, function () { return dead; });
     comp.create = function () {
       var self = this;
       this.activity.loader(true);
@@ -3990,6 +4025,7 @@
     var comp = new Lampa.InteractionMain(object), o = parseNf(object.nf), next = HALL_FIRST, dead = false;
     var inherited = comp.destroy ? comp.destroy.bind(comp) : function () {}, started = comp.start.bind(comp), noteLater = false;
 
+    loadAtEnd(comp, function () { return dead; });
     comp.create = function () {
       var self = this;
       this.activity.loader(true);
@@ -5215,6 +5251,7 @@
     '.nf-info__orig{font-size:.72em;font-weight:400;opacity:.6;margin-left:.8em}' +
     '.nf-info__facts{font-size:1.1em;line-height:1.35;max-height:2.7em;margin-top:.15em;opacity:.92;overflow:hidden}' +
     '.nf-info-pad{padding-bottom:5.6em}' +
+    '.nf-scr-body{min-height:100vh;min-height:-webkit-calc(100vh + 11em);min-height:calc(100vh + 11em)}' +
     // Оверлей трейлера (§8.5): выше шапки, меню и Select (55), ниже Noty (99). Подписи сверху: снизу —
     // субтитры YouTube. Полоса подписей непрозрачная: под ней прячется строка названия и аватар канала,
     // которые YouTube сам показывает в начале ролика и на паузе.
