@@ -682,7 +682,7 @@
   var STUB_PAUSE = 120000, STUB_PAUSE_MAX = 1800000;   // три ошибки сети подряд — пауза, дальше вдвое
   var STUB_OPEN_WAIT = 7000;         // OK на заглушке ждёт поиска, потом — поиск Lampa
   var STUB = { cache: null, busy: {}, queued: {}, queue: [], running: 0, cbs: {}, net: null, fails: 0, pause: 0,
-    downUntil: 0, failAt: {}, timer: 0, saving: 0, dirty: null, rows: [], hooked: false, home: null, homeMap: null };
+    downUntil: 0, failAt: {}, timer: 0, saving: 0, dirty: null, rows: [], cd: [], ct: [], hooked: false, home: null, homeMap: null };
   // Языки стран чарта (как COUNTRY_LANG в tools/netflix/matcher.py): язык оригинала «свой» для страны.
   var COUNTRY_LANGS = 'KR:ko;JP:ja;TW:zh cn;HK:cn zh;TH:th;VN:vi;ID:id;PH:tl;MY:ms id;IN:hi ta te ml kn mr bn pa gu;' +
     'PK:ur hi;BD:bn hi;TR:tr;IL:he;EG:ar;SA:ar;AE:ar;KW:ar;QA:ar;BH:ar;OM:ar;JO:ar;LB:ar;MA:ar fr;BR:pt;PT:pt;' +
@@ -1001,8 +1001,9 @@
         if (found) {
           applyStub(T);
           if (cur && cur !== T) applyStub(cur);
-          stubDirty(T.n);
         }
+        // Промах тоже: подпись «до N трейлеров» у «Отсчёта» становится точной.
+        stubDirty(T.n);
       }
       for (i = 0; i < list.length; i++) list[i](found);
       stubPump();
@@ -1087,6 +1088,22 @@
       }
       img = el.querySelector('.card__img');
       if (img && T.p && img.getAttribute('src')) { src = stubImg(T.p); if (img.src !== src) img.src = src; }
+    }
+    // «▶ Отсчёт 10→1»: заглушка топа найдена или нет — подпись пересчитывается (и у ещё не нарисованной плитки).
+    for (i = 0; i < STUB.cd.length; i++) {
+      d = STUB.cd[i];
+      if (!weekData(d.W)) continue;
+      src = countdownSub(worldTop(d.W, d.kind));
+      if (src && src !== d.sub) { d.sub = src; if (d.__tile) d.__tile.update(); }
+    }
+    // Плитки «Сейчас №1 по странам» (и ещё не нарисованные): №1 страны — найденная заглушка — получает постер и
+    // русское название.
+    for (i = 0; i < STUB.ct.length; i++) {
+      d = STUB.ct[i];
+      c = d.code && D.home && D.home.c && D.home.c[d.code];
+      if (!c || !c[1] || !c[1].length || !dirty[owner(c[1][0])]) continue;
+      countryTile(d.code, d);
+      if (d.__tile) d.__tile.update();
     }
   }
   // Событие line рядов плагина: заглушки ряда (первые ROW_MAX) — в очередь, видимый ряд — вперёд.
@@ -1943,8 +1960,12 @@
   }
   // Хвост топ-10: «▶ Отсчёт 10→1» с числом трейлеров (§8.7; нет ни одного — нет и плитки) и «История →».
   function topTails(W, kind, cards) {
-    var out = [], sub = countdownSub(cards || []);
-    if (sub) out.push(tailTile('▶ Отсчёт 10→1', sub, { act: 'countdown', W: W, kind: kind }));
+    var out = [], sub = countdownSub(cards || []), d;
+    if (sub) {
+      out.push(d = tailTile('▶ Отсчёт 10→1', sub, { act: 'countdown', W: W, kind: kind }));
+      // Подпись пересчитывается, когда заглушка топа найдена или нет (refreshStubCards), и до показа плитки.
+      STUB.cd.push(d); if (STUB.cd.length > 20) STUB.cd.shift();
+    }
     return out.concat(historyTail(W));
   }
   // «История →» открывает ленту недель на неделе ряда (§5.6), в чарте экрана.
@@ -1965,7 +1986,8 @@
   }
   function countryTile(code, d) {
     var T = D.T[owner(D.home.c[code][1][0])];
-    d = d || { tile: 'country', act: 'country' };
+    // Новая плитка — в список плиток стран: найденная заглушка №1 даст ей постер и русское название (refreshStubCards).
+    if (!d) { d = { tile: 'country', act: 'country' }; STUB.ct.push(d); if (STUB.ct.length > 300) STUB.ct.shift(); }
     d.code = code; d.title = countryName(code); d.sub = T ? '№1: ' + titleName(T) : ''; d.img = T ? T.p : '';
     return d;
   }
@@ -1977,13 +1999,15 @@
     row.nf_cc = true;
     return row;
   }
+  // Плитка перерисовывается, если сменились страна, её №1 или его постер и русское название (заглушка найдена).
   function refreshCountries(row) {
-    var codes = countryOrder(), list = row.results, i, d;
+    var codes = countryOrder(), list = row.results, i, d, was;
     for (i = 0; i < list.length && i < codes.length; i++) {
       d = list[i];
-      if (d.tile !== 'country' || d.code === codes[i]) continue;
+      if (d.tile !== 'country') continue;
+      was = d.code + '|' + d.sub + '|' + d.img;
       countryTile(codes[i], d);
-      if (d.__tile) d.__tile.update();
+      if (d.__tile && was !== d.code + '|' + d.sub + '|' + d.img) d.__tile.update();
     }
   }
   // «Мои подборы» — до SHELF_MAX последних подборов (Storage netflix_filter_hist, новые первыми) в начале
@@ -2313,6 +2337,7 @@
       img.src = Lampa.Api.img(data.img, 'w300');
     }
     this.visible = function () {
+      self.seen = true;
       if (data.img && !self.imgDone && self.el && Lampa.Api && Lampa.Api.img) loadImg();
       if (self.onVisible) self.onVisible();
     };
@@ -2328,8 +2353,9 @@
       sub = el.find('.nf-tile__sub');
       if (!sub.length && data.sub) { el.append('<div class="nf-tile__sub"></div>'); sub = el.find('.nf-tile__sub'); }
       sub.text(data.sub || '');
-      if (self.imgDone && data.img !== self.imgSrc) {
-        if (data.img) loadImg();
+      // Постер, пришедший после показа (плитка страны с найденной заглушкой), грузится сразу.
+      if ((self.imgDone || self.seen) && (data.img || '') !== (self.imgSrc || '')) {
+        if (data.img && Lampa.Api && Lampa.Api.img) loadImg();
         else { self.imgSrc = ''; el.find('img').removeClass('nf-tile__img--on'); }
       }
     };
@@ -4376,13 +4402,15 @@
     if (plain) return (m[1] === 'u' ? '+' : '−') + m[2];
     return '<span class="nf-mv nf-mv--' + (m[1] === 'u' ? 'up' : 'down') + '"><i></i>' + m[2] + '</span>';
   }
-  // Подпись плитки: «9 трейлеров». Пока у части тайтлов ролики не искали (tr = null) — «до 9 трейлеров».
+  // Подпись плитки: «9 трейлеров». Пока у части тайтлов ролики не искали (tr = null) — «до 9 трейлеров»; так же
+  // считается заглушка, которую ещё ищут в TMDB: найдётся — «Отсчёт» поищет и её ролик. Подпись
+  // пересчитывается, когда заглушка найдена (refreshStubCards).
   function countdownSub(cards) {
-    var seen = {}, n = 0, maybe = 0, i, T, keys;
+    var seen = {}, n = 0, maybe = 0, now = Date.now(), i, T, keys;
     for (i = 0; i < cards.length; i++) {
       T = cards[i].nf ? D.T[cards[i].nf.n] : null;
       if (!T) continue;
-      if (T.tr == null) { if (T.id) maybe++; continue; }
+      if (T.tr == null) { if (T.id || stubWanted(T, now) || STUB.busy[stubKey(T)]) maybe++; continue; }
       keys = trailerList(T, '');
       if (keys.length && !seen[keys[0].key]) { seen[keys[0].key] = 1; n++; }
     }
