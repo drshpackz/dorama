@@ -565,8 +565,6 @@
     });
   }
   function loaded(files) { var i; for (i = 0; i < files.length; i++) if (!D.files[files[i]]) return false; return true; }
-  // После первого показа — тихо индекс и все недели мира (§5.2, §10.1).
-  function loadBackground() { need(['index', 'global'], function () {}); }
 
   function onData(fn) {
     D.subs.push(fn);
@@ -2396,12 +2394,12 @@
     if (nf.meta) return '<div class="nf-meta">' + esc(nf.meta) + '</div>';
     return '';
   }
-  // ▶ под бейджем правого угла: у тайтла есть ролик; «▶ RU» — есть русская озвучка (§8). Треугольник —
-  // CSS, как стрелки движения.
+  // ▶ под бейджем правого угла: у тайтла есть ролик; «▶ RU» — есть русская озвучка (§8; у ru:s звук не
+  // русский). Треугольник — CSS, как стрелки движения.
   function trailerBadge(nf, under) {
     var k = trailerKeys(D.T[nf.n]);
     if (!k.ru && !k.en) return '';
-    return '<div class="nf-trb' + (under ? '' : ' nf-trb--top') + '"><i></i>' + (k.ru ? '<b>RU</b>' : '') + '</div>';
+    return '<div class="nf-trb' + (under ? '' : ' nf-trb--top') + '"><i></i>' + (ruAudio(k.ru) ? '<b>RU</b>' : '') + '</div>';
   }
   // Место, движение или бейдж, ▶ трейлера, подпись сезона, строка под названием. HTML — только через
   // jQuery: Lampa переопределяет Element.append. В рядах зовётся по событию line, в сетке (B3) — из cardRender.
@@ -2563,20 +2561,25 @@
     if (d.act === 'countdown') return ['Отсчёт 10→1', (d.sub ? d.sub + ' подряд, ' : '') + 'с 10-го места до 1-го · OK — смотреть'];
     if (d.act === 'grid') {
       m = /^wk(\d+)$/.exec(d.list || '');
-      return [d.title || (m ? 'Неделя ' + weekLabel(+m[1]) : 'Весь список'), (m ? 'все позиции четырёх списков Netflix' : 'весь список сеткой') + ' · OK — открыть'];
+      return [d.gtitle || d.title || (m ? 'Неделя ' + weekLabel(+m[1]) : 'Весь список'), (d.tile === 'tail' && d.sub ? d.sub + ' · ' : '') +
+        (m ? 'все позиции четырёх списков Netflix' : 'весь список сеткой') + ' · OK — открыть'];
     }
+    if (d.act === 'random') return [d.title, 'тайтл этого подбора наугад: трейлер, если есть, иначе страница · OK — новый бросок'];
+    if (d.act === 'filters') return [d.title, 'тип, жанр, страна, год · OK — все фильтры в одном меню'];
     return [d.title || '', d.sub || ''];
   }
   function seasonTail(sid) { var s = seasonLong(slabel(sid)); return s ? ', ' + s.charAt(0).toLowerCase() + s.slice(1) : ''; }
-  // §8: какой ролик сыграет ▶. flags — у трейлеров с проверенными субтитрами («s», пакет трейлеров).
+  // §8: какой ролик сыграет ▶, по звуку. Флаг s — субтитры в кадре, звук не язык ролика (пакет трейлеров):
+  // ru:s — «англ. звук, рус. суб.», en:s — «оригинал, англ. суб.».
   function trailerNote(T) {
     var k;
     if (T.tr === '') return 'трейлера нет';
     if (!T.tr) return '';
     k = trailerKeys(T);
-    if (k.ru) return 'трейлер: рус.' + (k.en ? ', англ.' : '');
-    if (k.en) return 'трейлер: англ.' + (k.en.flags && String(k.en.flags).indexOf('s') >= 0 ? ' субт.' : '');
-    return '';
+    if (ruAudio(k.ru)) return 'трейлер: рус.' + (k.en ? ', англ.' : '');
+    k = k.ru || k.en;
+    if (!k) return '';
+    return 'трейлер: ' + (/s/.test(k.flags || '') ? audioLabel(k, T).replace(' субтитры', ' суб.') : 'англ.');
   }
   // Момент рекорда Зала славы (§5.7) — подпись под карточкой и в полосе фокуса: неделя рекорда, отрезок
   // серии, годы в топе, откуда вернулся. e = {n, sid, W, a, b} из hallLists.
@@ -4661,13 +4664,13 @@
       if (b[0] && b[0].offsetParent !== null && !b.hasClass('focus')) { try { Lampa.Controller.collectionFocus(b[0], b.parent()[0]); } catch (e) {} }
     };
   }
-  // «Трейлер (RU)», «Тизер (EN)», «Ролик (EN + рус. суб.)»; tr = null — «Трейлер», плагин найдёт его в TMDB
+  // «Трейлер (RU)», «Тизер (EN)», «Трейлер (рус. суб.)» — ru:s, звук не русский; tr = null — «Трейлер», плагин найдёт его в TMDB
   // по нажатию, как ▶; искали и не нашли — «Трейлера нет».
   function trailerButtonText(T) {
     var k = trailerKeys(T);
     k = k.ru || k.en;
     if (!k) return T.tr === '' ? 'Трейлера нет' : 'Трейлер';
-    return (TR_KIND[k.type] || 'Трейлер') + ' (' + (k.lang === 'ru' ? 'RU' : 'EN' + (/s/.test(k.flags || '') ? ' + рус. суб.' : '')) + ')';
+    return (TR_KIND[k.type] || 'Трейлер') + ' (' + (/s/.test(k.flags || '') ? (k.lang === 'ru' ? 'рус. суб.' : 'англ. суб.') : k.lang === 'ru' ? 'RU' : 'EN') + ')';
   }
   // Строка под описанием: «Netflix: 42 нед. в мировом топе · №1 9 нед. подряд · №1 в 94 странах · сейчас в
   // топе 12 стран». Только из памяти: серия №1 — когда пришли недели мира, «сейчас» — из home.

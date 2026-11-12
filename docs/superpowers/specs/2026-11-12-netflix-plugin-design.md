@@ -283,7 +283,8 @@ token  := lang ":" type ":" key [":" flags]
 lang   := "ru" | "en"          — ru всегда первым, не больше одного токена на язык
 type   := "T" Trailer | "Z" Teaser | "C" Clip
 key    := YouTube id, [A-Za-z0-9_-]{11}
-flags  := резерв фазы 2: "s" — подтверждена русская дорожка субтитров (YouTube Data API)
+flags  := "s" — субтитры в кадре, звук не язык токена (имя ролика: [Subtitled], ENG SUB, «Субтитры»):
+          en:s — звук оригинала, англ. субтитры; ru:s — англ. звук, рус. субтитры (trailers.py, netflix.js TR_SUB)
 ```
 
 - `null` — ещё не искали. Плагин спросит TMDB сам (§8.6).
