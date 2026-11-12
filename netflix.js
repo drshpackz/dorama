@@ -3320,7 +3320,10 @@
     var act = comp.activity;
     act.toggle = function () {};
     try { comp.build(rows); } finally { delete act.toggle; }
-    // Экран активен под окном: окно, закрываясь, вернёт пульт в «content» — тогда экран и стартует.
+    startLater(comp, object);
+  }
+  // Экран активен под окном: окно, закрываясь, вернёт пульт в «content» — тогда экран и стартует.
+  function startLater(comp, object) {
     if (activeObj() === object) Lampa.Controller.add('content', { invisible: true, toggle: function () { comp.start(); }, back: function () { Lampa.Activity.backward(); } });
   }
   function componentNetflix(object) {
@@ -3488,7 +3491,8 @@
     comp.render().append(empty.render(true));
     comp.start = empty.start.bind(empty);
     comp.activity.loader(false);
-    comp.activity.toggle();
+    // Поверх экрана открыт поиск или окно: ошибка ждёт под ним и берёт пульт, когда окно закроется.
+    if (!obj || ownsRemote(obj)) comp.activity.toggle(); else startLater(comp, obj);
   }
 
   // ======================= Сетка «Ещё» — netflix_grid (§5.5) =======================
@@ -3503,7 +3507,7 @@
   }
   function componentGrid(object) {
     var comp = new Lampa.InteractionCategory(object), o = parseNf(object.nf), key = String(object.nf_list || ''), all = [], dead = false;
-    var inherited = comp.destroy ? comp.destroy.bind(comp) : function () {};
+    var inherited = comp.destroy ? comp.destroy.bind(comp) : function () {}, started = comp.start.bind(comp), noteLater = false;
 
     comp.create = function () {
       var self = this;
@@ -3512,6 +3516,7 @@
       setTimeout(function () {
         if (dead) return;
         loadScreen(gridFiles(o, key), function (err) {
+          var data;
           if (dead) return;
           if (err) { screenEmpty(self, err, key === 'ru' ? 'RU' : o.c); return; }
           try { all = gridCards(o, key); } catch (e) { log('grid', e && e.stack); all = null; }
@@ -3519,13 +3524,20 @@
           if (!all.length) { screenEmpty(self, 'empty', ''); return; }
           // Пустой список build не получает: там встроенный empty() с кнопкой CUB.
           object.page = 1;
-          self.build({ results: all.slice(0, ROW_MAX), total_pages: Math.ceil(all.length / ROW_MAX) });
+          data = { results: all.slice(0, ROW_MAX), total_pages: Math.ceil(all.length / ROW_MAX) };
+          // Поверх открыт поиск или окно: сетка собирается тихо и берёт пульт, когда окно закроется (§9).
+          if (ownsRemote(object)) { self.build(data); notices(); } else { buildQuiet(self, object, data); noteLater = true; }
           self.render().find('.category-full').addClass('mapping--grid cols--6');
-          notices();
         });
       }, 0);
       return this.render();
     };
+    comp.start = function () {
+      started();
+      if (noteLater && !dead) { noteLater = false; notices(); }
+    };
+    // Следующая страница: заглушки, найденные с начала показа, рисуются уже с постером, остальные ищутся
+    // первыми (у сетки нет события line, stubScan видит только первую страницу).
     comp.nextPageReuest = function (obj, resolve, reject) {
       var from = ((obj.page || 1) - 1) * ROW_MAX, part = all.slice(from, from + ROW_MAX);
       if (part.length) resolve({ results: part }); else reject();
@@ -3699,7 +3711,7 @@
   }
   function componentHall(object) {
     var comp = new Lampa.InteractionMain(object), o = parseNf(object.nf), next = HALL_FIRST, dead = false;
-    var inherited = comp.destroy ? comp.destroy.bind(comp) : function () {};
+    var inherited = comp.destroy ? comp.destroy.bind(comp) : function () {}, started = comp.start.bind(comp), noteLater = false;
 
     comp.create = function () {
       var self = this;
@@ -3716,11 +3728,15 @@
             if (!rows.length) { rows = hallRows(o, next, HALL.length); next = HALL.length; }
           } catch (e) { log('hall', e && e.stack); screenEmpty(self, 'build', ''); return; }
           if (!rows.length) { screenEmpty(self, 'empty', ''); return; }
-          self.build(rows);
-          notices();
+          // Поверх открыт поиск или окно: ряды собираются тихо и берут пульт, когда окно закроется (§9).
+          if (ownsRemote(object)) { self.build(rows); notices(); } else { buildQuiet(self, object, rows); noteLater = true; }
         });
       }, 0);
       return this.render();
+    };
+    comp.start = function () {
+      started();
+      if (noteLater && !dead) { noteLater = false; notices(); }
     };
     comp.next = function (resolve, reject) {
       var rows = [];
