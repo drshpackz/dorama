@@ -3204,8 +3204,10 @@
       remember(o, canon, mode);
       if (!cur || cur.component !== 'netflix') { Lampa.Activity.push(obj); return; }
       if ((cur.nf || '') === canon) { Lampa.Controller.toggle(from); return; }
+      // С «Мира» подбор открывается поверх него; «Мир» с другой сортировкой — тот же «Мир», его заменяем:
+      // «Мира» на «Мире» не бывает (§6.4.7), одно «Назад» выходит.
       if (nfMode(parseNf(cur.nf)) === 'world') {
-        if (opts && opts.replace) Lampa.Activity.replace(obj); else Lampa.Activity.push(obj);
+        if ((opts && opts.replace) || mode === 'world') Lampa.Activity.replace(obj); else Lampa.Activity.push(obj);
         return;
       }
       // Подбор → «Мир»: если под ним «Мир» — шаг назад к нему; другая сортировка — он её и примет.
