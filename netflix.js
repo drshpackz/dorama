@@ -1475,7 +1475,17 @@
     O = ORIGIN[v];
     return !O || !!((T.oc && O.ocSet[T.oc]) || (T.ol && O.olSet[T.ol]));
   }
-  function passRelease(T, v) { var R = RELEASE[v]; return !R || !R.to || (!!T.yr && T.yr >= R.from && T.yr <= R.to); }
+  function passRelease(T, v) { var R = RELEASE[v], yr = relYear(T); return !R || !R.to || (!!yr && yr >= R.from && yr <= R.to); }
+  // Год выхода для «Года выхода» и сортировок по нему. Фильм мирового топа, вышедший больше чем за 40 лет до
+  // первой недели в топе, — тёзка из TMDB (The Man from Toronto 1933, 365 Days 1922, Spellbound 1945): год
+  // неизвестен, пока конвейер не пересоберёт данные (overrides.json). Top Gun 1986 и «Могила светлячков» 1988
+  // (мир 2022 и 2024) остаются; ручное сопоставление (cf 3) не трогаем.
+  var REL_GAP = 40;
+  function relYear(T) {
+    if (!T.yr) return 0;
+    if (T.k === 0 && T.cf !== 3 && typeof T.gf === 'number' && T.gf >= 0 && weekYear(T.gf) - T.yr > REL_GAP) return 0;
+    return T.yr;
+  }
   // Фасеты тайтла. skip — фасет, который не проверять (живые счётчики); chart — недельный чарт:
   // прямые эфиры в нём остаются (§4.1, lv). Без TMDB тайтл скрыт, если задан жанр, «Откуда» или год выхода.
   function passFacets(T, o, skip, chart) {
@@ -1561,8 +1571,8 @@
       case 'c1': return T.c1 || 0;
       case 'new': b = wa ? T.gf : x.first; return b != null && b >= 0 ? b : -1;
       case 'rating': return T.va || 0;
-      case 'ynew': return T.yr || -1;
-      case 'yold': return T.yr ? -T.yr : -99999;
+      case 'ynew': return relYear(T) || -1;
+      case 'yold': return relYear(T) ? -relYear(T) : -99999;
     }
     if (ctx.c) return x.pts;                                  // страна: очки в ней за период
     if (wa) return T.pts || 0;                                // мир, всё время: очки по странам
@@ -1598,7 +1608,7 @@
       case 'c1': return T.c1 ? '№1 в ' + T.c1 : '—';
       case 'new': v = wa ? T.gf : x.first; return v != null && v >= 0 ? 'с ' + monthYear(v) : '—';
       case 'rating': return T.va ? '★ ' + comma((T.va / 10).toFixed(1)) : '—';
-      case 'ynew': case 'yold': return T.yr ? String(T.yr) : '—';
+      case 'ynew': case 'yold': return relYear(T) ? String(relYear(T)) : '—';
     }
     v = wa ? T.gb : (x.best < 99 ? x.best : 0); w = wa ? T.gw : x.wk;
     return v ? '№' + v + ' · ' + (w || 0) + ' нед.' : '';
