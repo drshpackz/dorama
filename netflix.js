@@ -3539,8 +3539,17 @@
     // Следующая страница: заглушки, найденные с начала показа, рисуются уже с постером, остальные ищутся
     // первыми (у сетки нет события line, stubScan видит только первую страницу).
     comp.nextPageReuest = function (obj, resolve, reject) {
-      var from = ((obj.page || 1) - 1) * ROW_MAX, part = all.slice(from, from + ROW_MAX);
-      if (part.length) resolve({ results: part }); else reject();
+      var from = ((obj.page || 1) - 1) * ROW_MAX, part = all.slice(from, from + ROW_MAX), stubs = [], i, c, T;
+      if (!part.length) { reject(); return; }
+      for (i = 0; i < part.length; i++) {
+        c = part[i];
+        if (!c || !c.nf || c.id || !(T = D.T[c.nf.n])) continue;
+        if (T.id) stubPatch(c, T); else stubs.push(T);
+      }
+      resolve({ results: part });
+      // Находка до того, как Lampa дорисует страницу, попадёт в данные карточки (refreshStubCards).
+      if (stubs.length) { STUB.rows.push({ results: part }); if (STUB.rows.length > 200) STUB.rows.shift(); }
+      stubQueue(stubs, true);
     };
     comp.cardRender = function (obj, element, card) {
       var focus = card.onFocus;
