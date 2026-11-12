@@ -131,13 +131,24 @@
     // По состоянию плеера: до первой игры ролика — full; буфер — on; игра — on ещё VEIL_HOLD; пауза — снять.
     function veilState(s) {
       if (ad) veil('');
-      else if (s === 1) { if (!started) capVeil(VEIL_CAP); started = true; veil('play'); }
+      else if (s === 1) { if (!started && capNotice()) capVeil(VEIL_CAP); started = true; veil('play'); }
       else if (!started) veil('full');
       else if (s === 3) veil('on');
       else if (s === 2) veil('');
     }
     // Перемотка: YouTube показывает кнопки и без смены состояния.
     function veilSeek() { if (started && !ad) veil('play'); }
+    // Уведомление о субтитрах YouTube показывает, только когда включает дорожку: у ключа без русского звука
+    // и с непустым списком дорожек. Иначе полоса не нужна — верх кадра не трогаем.
+    function capNotice() {
+      var list;
+      if (nocc[key()]) return false;
+      try {
+        if (!player || !has(player.getOptions(), 'captions')) return false;
+        list = player.getOption('captions', 'tracklist');
+        return Object.prototype.toString.call(list) === '[object Array]' && list.length > 0;
+      } catch (e) { return false; }
+    }
     // Полоса над уведомлением YouTube о субтитрах: на ms (0 — снять). В рекламе — нет.
     function capVeil(ms) {
       clearTimeout(capVeilTimer); capVeilTimer = null;
