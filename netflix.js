@@ -2043,7 +2043,8 @@
   }
   // Плитки-рекорды: первое место списков Зала славы среди прошедших подбор (§5.2, ряд 7; §5.4, ряд 11).
   // Тайтл — только в одной плитке: если он уже стоит в ряду, плитку берёт следующий в списке (иначе
-  // «Игра в кальмара» заняла бы четыре плитки из восьми).
+  // «Игра в кальмара» заняла бы четыре плитки из восьми). Такая плитка честно называет своё место
+  // («№3 · 411,3 млн ч») и держателя рекорда — его первой показывает сетка списка, которую открывает OK.
   function recordsRow(title, o) {
     var items = [], used = {}, i, j, key, list;
     for (i = 0; i < HALL_HOME.length; i++) {
@@ -2052,7 +2053,7 @@
       for (j = 0; j < list.length; j++) {
         if (used[list[j].n]) continue;
         used[list[j].n] = true;
-        items.push(hallCard(key, list[j], true));
+        items.push(hallCard(key, list[j], true, j ? { place: j + 1, top: list[0] } : null));
         break;
       }
     }
@@ -2063,9 +2064,17 @@
   // Карточка списка Зала славы. tile — плитка-рекорд главного экрана: OK на ней открывает сетку
   // списка (rec); в рядах и сетке Зала славы OK ведёт на страницу тайтла (hk — только для подписи).
   // Под карточкой — момент рекорда (hallMoment), не название списка: оно уже в заголовке ряда.
-  function hallCard(key, e, tile) {
-    var x = { meta: e.badge, wk: e.W >= 0 ? e.W : null, tp: e.sid != null ? seasonShort(slabel(e.sid)) : '', age: hallMoment(key, e) };
+  function hallCard(key, e, tile, below) {
+    var x = { meta: e.badge, wk: e.W >= 0 ? e.W : null, tp: e.sid != null ? seasonShort(slabel(e.sid)) : '', age: hallMoment(key, e) }, s0;
     x[tile ? 'rec' : 'hk'] = key;
+    // Плитка не с первого места: бейдж с местом, в строке фокуса — чей рекорд (cardInfo).
+    if (below) {
+      s0 = below.top.sid != null ? seasonShort(slabel(below.top.sid)) : '';
+      // «№3 · 411,3 млн ч»; бейдж со своим «№» — «2-е · №1 в 94», а не «№2 · №1 в 94».
+      x.meta = (/^№/.test(e.badge) ? below.place + '-е · ' : '№' + below.place + ' · ') + e.badge;
+      x.rp = below.place;
+      x.rtop = titleName(D.T[below.top.n]) + (s0 ? ' ' + s0 : '') + ', ' + below.top.badge;
+    }
     return makeCard(D.T[e.n], e.sid, x);
   }
   // «Эта неделя в прошлые годы» (§5.2, ряд 8; §5.3, ряд 7): №1 сериалов и фильмов недели W − 52k.
@@ -2500,9 +2509,13 @@
     if (!T) return null;
     lab = seasonLong(slabel(nf.sid));
     if (hk) {
-      // «Дольше всех №1 подряд: 9 нед.» — без второго «подряд» из бейджа; затем момент рекорда.
-      parts.push(HALL_T[hk].title + ': ' + (/подряд/.test(HALL_T[hk].title) ? String(nf.meta || '').replace(/\s*подряд$/, '') : nf.meta));
+      // «Дольше всех №1 подряд: 9 нед.» — без второго «подряд» из бейджа; затем момент рекорда. Плитка не
+      // с первого места: «Рекорд недели · часы · 3-е место: 411,3 млн ч · … · рекорд — Игра в кальмара С1, 571,8 млн ч».
+      x = String(nf.meta || '');
+      if (nf.rp) x = x.replace(/^(?:№\d+|\d+-е) · /, '');
+      parts.push(HALL_T[hk].title + (nf.rp ? ' · ' + nf.rp + '-е место' : '') + ': ' + (/подряд/.test(HALL_T[hk].title) ? x.replace(/\s*подряд$/, '') : x));
       if (nf.age) parts.push(nf.age);
+      if (nf.rtop) parts.push('рекорд — ' + nf.rtop);
     } else if (nf.pl && nf.cat != null) parts.push('№' + nf.pl + ' ' + LIST_GEN[nf.cat]);
     else if (nf.cpl && nf.cc) parts.push('№' + nf.cpl + ' ' + countryPrep(nf.cc));
     else if (/^91 день · /.test(nf.age || '')) {
