@@ -674,7 +674,7 @@
   // (refreshStubCards). Ищется то, что на экране: home, ряды по событию line (видимые — первыми),
   // сетки и две последние недели открытой страны. Совпадение берётся только явное (stubPick), промах
   // повторяется раз в неделю, находка перепроверяется через 30 дней. Сеть упала — пауза на сессию.
-  var STUB_KEY = 'netflix_stub_tmdb3', STUB_OLD = ['netflix_stub_tmdb', 'netflix_stub_tmdb2'], STUB_MAX = 500, STUB_PAR = 4, STUB_T = 8000;
+  var STUB_KEY = 'netflix_stub_tmdb4', STUB_OLD = ['netflix_stub_tmdb', 'netflix_stub_tmdb2', 'netflix_stub_tmdb3'], STUB_MAX = 500, STUB_PAR = 4, STUB_T = 8000;
   var STUB_RETRY = 7 * DAY;          // промах ищется снова не раньше
   var STUB_LIFE = 30 * DAY;          // находка перепроверяется (постер и русское название приходят позже)
   var STUB_THIN = 3 * DAY;           // находка без постера или русского названия — раньше
@@ -690,6 +690,8 @@
     'FR:fr;BE:fr nl;CH:de fr it;DE:de;AT:de;IT:it;PL:pl;CZ:cs;SK:sk cs;HU:hu;RO:ro;BG:bg;GR:el;CY:el;HR:hr;RS:sr;' +
     'SI:sl;UA:uk;RU:ru;LT:lt;LV:lv;EE:et;NL:nl;DK:da;NO:no nb;SE:sv;FI:fi;IS:is;NG:yo;KE:sw;ZA:af zu;LU:fr de;' +
     'GP:fr;MQ:fr;RE:fr;NC:fr;MU:fr;CA:fr';
+  // Страны со своим языком, где английское кино — тоже «своё»: в них английский тёзка не чужой (stubCtx nonEn).
+  var EN_MIXED = { CA: 1, IN: 1, PH: 1, NG: 1, KE: 1, ZA: 1, MY: 1, PK: 1, BD: 1 };
   var CLANG = null;
   function countryLangs(code) {
     var parts, i, f;
@@ -752,6 +754,37 @@
     if (!y0) y0 = ys[last] || new Date().getFullYear();
     return { y0: y0, isNew: !!gy && T.gf >= lastW() - 8 && (first < 0 || first === last) };
   }
+  // Первая неделя тайтла в чартах не раньше года y0 (неделя тёзки годами раньше не в счёт): мировой топ, открытые
+  // страны, последняя неделя (home.c). −1 — неизвестно. Номер первой недели тайтла в стране — C.first (один
+  // проход по файлу страны).
+  function stubFirstW(T, y0) {
+    var n = T.n, best = -1, k, C, i, j, lists, list, p, m, W;
+    function take(W) { if (W >= 0 && weekYear(W) >= y0 && (best < 0 || W < best)) best = W; }
+    if (typeof T.gf === 'number' && T.gf >= 0) take(T.gf);
+    for (k in D.cty) {
+      if (!D.cty.hasOwnProperty(k)) continue;
+      C = D.cty[k];
+      if (!C.first) {
+        C.first = {};
+        for (i = 0; i < C.f.length || i < C.t.length; i++) {
+          lists = [C.f[i] || [], C.t[i] || []];
+          for (j = 0; j < 2; j++) {
+            list = lists[j];
+            for (p = 0; p < list.length; p++) {
+              m = owner(list[p]);
+              if (m == null) continue;
+              W = C.first[m] || (C.first[m] = []);
+              if (W[W.length - 1] !== C.w1 + i) W.push(C.w1 + i);
+            }
+          }
+        }
+      }
+      list = C.first[n] || [];
+      for (i = 0; i < list.length; i++) if (weekYear(list[i]) >= y0) { take(list[i]); break; }
+    }
+    if (best < 0 && STUB.homeMap && STUB.homeMap[n]) take(lastW());
+    return best;
+  }
   // Страны, где тайтл в топе: последняя неделя (home.c) и открытые страны (свои тайтлы и год недель).
   function stubPlaces(T) {
     var cc = {}, n = T.n, map, k, C, W, j, lists, list, p, codes, i;
@@ -790,10 +823,19 @@
     for (i = 0; i < sids.length; i++) if ((m = /^С(\d+)/.exec(seasonShort(slabel(sids[i]))))) best = Math.max(best, +m[1]);
     return best;
   }
+  // nonEn — тайтл только из чартов стран (не был в мировом топе), и все его страны неанглоязычные: английский
+  // фильм без своей страны и языка для него — чужой тёзка (fg). hit — был №1–3 в какой-то стране. d0 — день
+  // первой недели в чартах (воскресенье; неизвестна — конец года y0): кандидат, вышедший позже, — не он.
   function stubCtx(T) {
-    var w = stubWhen(T), cc = stubPlaces(T), langs = {}, ncc = 0, k, l, i;
-    for (k in cc) if (cc.hasOwnProperty(k)) { ncc++; l = countryLangs(k); for (i = 0; i < l.length; i++) langs[l[i]] = 1; }
-    return { tv: T.k === 1, y0: w.y0, isNew: w.isNew, fresh: w.y0 >= (years().slice(-1)[0] || 0), cc: cc, ncc: ncc, langs: langs, lg: T.lg, season: T.k === 1 ? stubSeason(T) : 0,
+    var w = stubWhen(T), cc = stubPlaces(T), langs = {}, ncc = 0, nonEn = !(typeof T.gf === 'number' && T.gf >= 0), k, l, i, W;
+    for (k in cc) if (cc.hasOwnProperty(k)) {
+      ncc++; l = countryLangs(k);
+      if (!l.length || EN_MIXED[k]) nonEn = false;
+      for (i = 0; i < l.length; i++) langs[l[i]] = 1;
+    }
+    W = stubFirstW(T, w.y0);
+    return { n: T.n, tv: T.k === 1, y0: w.y0, isNew: w.isNew, fresh: w.y0 >= (years().slice(-1)[0] || 0), cc: cc, ncc: ncc, langs: langs, lg: T.lg, season: T.k === 1 ? stubSeason(T) : 0,
+      nonEn: nonEn && ncc > 0, hit: T.cb >= 1 && T.cb <= 3, d0: W >= 0 ? weekSun(W).getTime() : Date.UTC(w.y0, 11, 31),
       strict: stubStrict(noVersion(T.t)), loose: looseTitle(T.t), norm: normTitle(noVersion(T.t)), sole: false };
   }
 
@@ -809,8 +851,9 @@
     x = x.replace(/\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/g, function (w) { return String(NUM_WORD[w]); });
     return normTitle(x);
   }
-  // Строго: без пробелов и обычной пунктуации, но «!», «#», «?» и «&» значимы (Heist! и #Unknown — другие фильмы).
-  function stubStrict(s) { return String(s || '').toLowerCase().replace(/[\s.,:;'’‘`"«»()\/\-–—]+/g, ''); }
+  // Строго: без пробелов и обычной пунктуации, но «!», «#», «?», «&» и многоточие значимы (Heist! и #Unknown —
+  // другие фильмы; греческий «What If...» 2012 — не «What If» 2014 с Рэдклиффом).
+  function stubStrict(s) { return String(s || '').toLowerCase().replace(/\.{2,}|…/g, '…').replace(/[\s.,:;'’‘`"«»()\/\-–—]+/g, ''); }
   // Коэффициент Дайса по парам букв.
   function dice(a, b) {
     var m = {}, hit = 0, i, k;
@@ -832,10 +875,12 @@
       if (ctx.strict && stubStrict(names[i]) === ctx.strict) return 3;
       // Название на другом письме (малаялам, хинди, тайский) после normTitle — лишь цифры и латинские
       // вставки: «പല്ലൊട്ടി 90's കിഡ്സ്‌» не «90's». Такое имя сравнивается только строго.
-      if (normTitle(names[i]).length < 0.7 * stubStrict(names[i]).replace(/[!?#&+*]/g, '').length) continue;
+      if (normTitle(names[i]).length < 0.7 * stubStrict(names[i]).replace(/[!?#&+*…]/g, '').length) continue;
       l = looseTitle(names[i]);
       if (!l || !ctx.loose) continue;
       if (l === ctx.loose) { best = Math.max(best, 2); continue; }
+      // Пояснение в скобках у TMDB: «LOL (Laughing Out Loud)» — это «LOL».
+      if ((n = /^(.+?)\s*\([^()]+\)\s*$/.exec(names[i])) && looseTitle(n[1]) === ctx.loose) { best = Math.max(best, 2); continue; }
       a = l.length < ctx.loose.length ? l : ctx.loose;
       b = a === l ? ctx.loose : l;
       if (a.length >= 5 && a.length / b.length >= 0.6 && b.indexOf(a) >= 0 && b.replace(a, '').replace(/[0-9]+/g, '').length >= 4) best = Math.max(best, 1);
@@ -849,10 +894,18 @@
   // ответ поиска со «своей» страной или языком. Очки: год, известность (голоса), язык списка Netflix,
   // страна производства или язык оригинала среди стран, где тайтл в топе.
   function stubScore(ctx, r, lv) {
-    var yr = parseInt(String((ctx.tv ? r.first_air_date : r.release_date) || '').slice(0, 4), 10) || 0;
+    var date = String((ctx.tv ? r.first_air_date : r.release_date) || ''), yr = parseInt(date.slice(0, 4), 10) || 0, day = parseDay(date);
     var d = yr ? ctx.y0 - yr : 99, dd, vc = r.vote_count || 0, ol = r.original_language || '', oc = r.origin_country || [];
-    var loc = false, bad = false, s = 0, i;
-    if (yr && yr > ctx.y0 + 1) return null;
+    var loc = false, bad = false, late, s = 0, i;
+    // Вышел позже первой недели в чартах (допуск 14 дней) — почти всегда не он: «Love Song» Дании 10.2021 — не
+    // «A Love Song» 07.2022. Бывает, TMDB датирует фильм Netflix позже (Untold: Caitlyn Jenner, 08.2021 → 2022):
+    // такой кандидат (late) — только то же название и не позже следующего года, и stubPick отбрасывает его, если
+    // есть известный (≥ 20 голосов) тёзка до чарта («The Three Musketeers» Исландии 07.2022 — не фильм 2023-го).
+    late = !isNaN(day) ? day > ctx.d0 + 14 * DAY : yr > new Date(ctx.d0).getUTCFullYear();
+    if (late && (lv < 3 || yr > ctx.y0 + 1)) return null;
+    if (d < 0) d = 0;
+    // Тот же id у другого тайтла Netflix в индексе — не он («Father» Словакии — не «The Father» с Хопкинсом).
+    if (stubTaken(ctx, r)) return null;
     // Сезон N у Netflix: сериал начался примерно на N − 1 лет раньше.
     if (yr && ctx.season > 1 && d > 0) d = Math.max(0, d - ctx.season + 1);
     dd = Math.abs(d);
@@ -865,7 +918,27 @@
     else if (ctx.lg === 1) { bad = !ol || ol === 'en'; s += bad ? -20 : 10; }
     else if (ctx.ncc && ol && ol !== 'en' && !ctx.langs[ol]) s -= 10;
     if (loc) s += 15;
-    return { r: r, lv: lv, s: s, yr: yr, dd: dd, vc: vc, loc: loc, bad: bad };
+    return { r: r, lv: lv, s: s, yr: yr, dd: dd, vc: vc, loc: loc, bad: bad, late: late, fg: ctx.nonEn && ol === 'en' && !loc };
+  }
+  // id кандидата уже у другого тайтла индекса того же вида TMDB (не заглушки) с другим названием. То же название —
+  // дубляж того же фильма («The Suicide Squad (Dubbed Version)»), он делит id.
+  function stubTaken(ctx, r) {
+    var m, T2, k, i, T;
+    if (!D.index) return false;
+    m = D.stubIds;
+    if (!m || D.stubIdsOf !== D.index) {
+      m = D.stubIds = {}; D.stubIdsOf = D.index;
+      for (i = 0; i < D.index.list.length; i++) {
+        T = D.T[D.index.list[i]];
+        if (T && T.id && !T.stub) { k = (isTv(T) ? 'tv:' : 'movie:') + T.id; if (!m[k]) m[k] = []; m[k].push(T.n); }
+      }
+    }
+    k = m[(ctx.tv ? 'tv:' : 'movie:') + r.id] || [];
+    for (i = 0; i < k.length; i++) {
+      T2 = D.T[k[i]];
+      if (T2 && T2.n !== ctx.n && stubStrict(noVersion(T2.t)) !== ctx.strict) return true;
+    }
+    return false;
   }
   function stubCands(ctx, list) {
     var out = [], i, lv, c;
@@ -888,15 +961,27 @@
   // которого лучший не обходит ни годом, ни своей страной, ни впятеро голосами: «The Mummy» 1999 и 2017 —
   // заглушка; отрыв не нужен классике (≥ 1000 голосов), которая в 20 раз известнее всех тёзок (Gladiator 2000).
   // Единственный известный (≥ 100) среди безвестных (< 20) — +10.
+  // nonEn (тайтл только неанглоязычных стран): кандидат со своей страной или языком входит в пул и с именем без
+  // знаков («LOL (Laughing Out Loud)» Франции, а не американский ремейк «LOL»); чужой английский тёзка (fg) с именем
+  // без знаков в пул по голосам не входит, но, известный, делает выбор неоднозначным, если у лучшего нет своей
+  // страны («What If...» Греции: не «What If» 2014 с Рэдклиффом и не «What if...» 2010). Уровень 1 (лишнее слово)
+  // проходит только со своей страной или голосами, не одним годом («Borders» Израиля — не «Borders & Lies»).
   function stubPick(cands, ctx) {
-    var top = 0, pool = [], known = [], dom = null, v3 = 0, v2 = 0, i, a, x, floor;
+    var top = 0, pool = [], known = [], dom = null, v3 = 0, v2 = 0, early = false, block = false, i, a, x, c, floor;
     function sc(c) { return c.s + (c === dom ? 10 : 0); }
+    for (i = 0; i < cands.length; i++) if (cands[i].lv === 3 && !cands[i].late && cands[i].vc >= 20) early = true;
     for (i = 0; i < cands.length; i++) {
+      if (early && cands[i].late) continue;
       if (cands[i].lv > top) top = cands[i].lv;
       if (cands[i].lv === 3) v3 = Math.max(v3, cands[i].vc);
-      if (cands[i].lv === 2) v2 = Math.max(v2, cands[i].vc);
+      if (cands[i].lv === 2 && !cands[i].fg) v2 = Math.max(v2, cands[i].vc);
     }
-    for (i = 0; i < cands.length; i++) if (cands[i].lv === top || (top === 3 && cands[i].lv === 2 && v2 >= 50 && v2 >= 5 * v3)) pool.push(cands[i]);
+    for (i = 0; i < cands.length; i++) {
+      c = cands[i];
+      if (early && c.late) continue;
+      if (c.lv === top || (top === 3 && c.lv === 2 && ((v2 >= 50 && v2 >= 5 * v3 && !c.fg) || (ctx.nonEn && c.loc)))) pool.push(c);
+      else if (top === 3 && c.lv === 2 && c.fg && c.vc >= 50 && c.vc >= 5 * v3) block = true;
+    }
     if (!pool.length) return null;
     for (i = 0; i < pool.length; i++) if (pool[i].vc >= 20) known.push(pool[i]);
     if (known.length && !ctx.fresh) for (i = pool.length - 1; i >= 0; i--) if (!pool[i].vc && !pool[i].loc) pool.splice(i, 1);
@@ -905,7 +990,9 @@
     a = pool[0];
     // Язык TMDB против списка Netflix (англ. / не англ.) у одиночки — отказ, если только не то же имя и год.
     if (a.bad && pool.length === 1 && !(a.lv === 3 && a.dd <= 1)) return null;
+    if (block && !a.loc) return null;
     floor = a.dd > 15 ? 100 : 20;
+    if (a.lv === 1 && !a.loc && (ctx.tv || a.vc < (a.dd <= 1 ? 20 : Math.max(floor, 50)))) return null;
     if (!(a.dd <= 1 || (a.loc && (!a.yr || a.dd <= 40 || a.vc >= 50)) || (a.lv >= 2 && a.vc >= floor) || (a.lv === 1 && !ctx.tv && a.vc >= Math.max(floor, 50)))) return null;
     if (pool.length === 1) return a;
     for (i = 1; i < pool.length; i++) {
@@ -935,14 +1022,34 @@
     search();
     // Netflix ведёт стендап и спецвыпуски сериалами, а TMDB — фильмами (Ralph Barbosa: Cowabunga): поиск
     // сериалов без единого подходящего имени — ищем фильм.
+    function get(extra, ok) {
+      STUB.net.silent(Lampa.TMDB.api('search/' + (ctx.tv ? 'tv' : 'movie') + '?query=' + encodeURIComponent(noVersion(T.t)) + '&language=en-US' + extra + key), function (json) {
+        ok((json && json.results) || [], json || {});
+      }, function () { done(false); }, false, { timeout: STUB_T });
+    }
     function search() {
-      STUB.net.silent(Lampa.TMDB.api('search/' + (ctx.tv ? 'tv' : 'movie') + '?query=' + encodeURIComponent(noVersion(T.t)) + '&language=en-US' + key), function (json) {
-        var list = (json && json.results) || [], cands;
+      get('', function (list, json) {
+        var cands, c;
         ctx.sole = list.length === 1 && (json.total_results || 1) === 1;
         cands = stubCands(ctx, list);
         if (!cands.length && ctx.tv) { ctx.tv = false; ctx.season = 0; search(); return; }
+        // Тайтл неанглоязычных стран без своего кандидата: местный фильм года чартов часто не на первой странице
+        // поиска (словацкий «Otec» 2025 за «The Father» и десятком «Father») — второй поиск по году.
+        c = ctx.nonEn ? stubPick(cands, ctx) : null;
+        if (ctx.nonEn && (!c || !c.loc)) { byYear(cands); return; }
         check(cands);
-      }, function () { done(false); }, false, { timeout: STUB_T });
+      });
+    }
+    function byYear(cands) {
+      get((ctx.tv ? '&first_air_date_year=' : '&year=') + ctx.y0, function (list) {
+        var seen = {}, more, i;
+        ctx.sole = false;
+        more = stubCands(ctx, list);
+        for (i = 0; i < cands.length; i++) seen[cands[i].r.id] = 1;
+        // Из поиска по году — только свои: он ищет местный фильм, а не ещё одного безвестного тёзку.
+        for (i = 0; i < more.length; i++) if (!seen[more[i].r.id] && more[i].loc) cands.push(more[i]);
+        check(cands);
+      });
     }
     function check(cands) {
       var c = stubPick(cands, ctx);
@@ -5217,6 +5324,10 @@
       _pickRows2: pickRows2,
       _expansionRows: expansionRows,
       _hintRow: hintRow,
+      _stubCtx: stubCtx,
+      _stubCands: stubCands,
+      _stubPick: stubPick,
+      _relYear: relYear,
       _decorateCard: decorateCard,
       _focusLine: focusLine,
       _applyNf: applyNf,
