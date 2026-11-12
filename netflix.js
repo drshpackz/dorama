@@ -2970,19 +2970,37 @@
       onBack: cfg.back
     });
   }
-  // Выбор недели (§6.2): «Год: 2026 ›», «Год назад · 3–9 нояб. 2025», недели года с подписью-№1.
-  // Фокус — на текущей неделе (selected); ↑ с неё — «Год назад».
+  // Выбор недели (§6.2): «Год: 2026 ›», «Год назад · 3–9 нояб. 2025», недели года с подписью-№1 и живым
+  // числом подбора (§6.2, §9): неделя без позиций приглушена и не нажимается, подпись-№1 — первый тайтл
+  // подбора. Фокус — на текущей неделе (selected), а если в ней пусто — на ближайшей непустой; ↑ — «Год назад».
   function showWeekPicker(o, W, cfg) {
-    var r = chartRange(o.c), items = [], Y, yr, w, cap;
+    var r = chartRange(o.c), items = [], Y, yr, w, cap, d, k, best = -1;
+    var live = o.c ? !!D.cty[o.c] && !!D.index : !!D.global && !!D.index, facets = !!(o.t || o.g.length || o.o || o.r || o.lv);
     if (!r) { cfg.back(); return; }
     W = Math.max(r[0], Math.min(r[1], W));
     Y = weekYear(W); yr = yearInChart(Y, o.c);
+    function weekItem(it, w) {
+      var o2 = withNf(o, 'p', 'w' + w), list = live ? sortedResult(o2) : null, lead, isCur = o.p === 'w' + w;
+      lead = list ? (facets ? (list[0] ? titleName(list[0]) : '') : weekLeader(w, o.c)) : weekLeader(w, o.c);
+      it.subtitle = [it.subtitle || '', lead, list ? fmtInt(list.length) : ''].filter(Boolean).join(' · ');
+      it.w = w; it.n = list ? list.length : -1;
+      if (list && !list.length && !isCur) { it.ghost = true; it.noenter = true; }
+      return it;
+    }
     items.push({ title: 'Год: ' + Y + ' ›', year: true });
-    if (W - 52 >= r[0]) items.push({ title: 'Год назад', subtitle: weekLabel(W - 52, { short: true }), w: W - 52 });
+    if (W - 52 >= r[0]) items.push(weekItem({ title: 'Год назад', subtitle: weekLabel(W - 52, { short: true }) }, W - 52));
     // Неделя, которой ещё нет, в списке не пункт, а подпись: разделитель фокус не получает.
     cap = yr[1] === lastW() && r[1] === lastW() ? weekLabel(yr[1] + 1, { noYear: true }) + ' — выйдет после обновления во вторник' : 'Недели ' + Y;
     items.push({ title: cap, separator: true });
-    for (w = yr[1]; w >= yr[0]; w--) items.push({ title: weekLabel(w, { noYear: true }), subtitle: weekLeader(w, o.c), w: w, selected: w === W });
+    k = items.length;
+    for (w = yr[1]; w >= yr[0]; w--) items.push(weekItem({ title: weekLabel(w, { noYear: true }) }, w));
+    // Фокус: неделя W, если в ней есть позиции подбора (или это текущая неделя подбора), иначе ближайшая непустая.
+    for (w = k; w < items.length; w++) {
+      if (items[w].noenter) continue;
+      d = Math.abs(items[w].w - W);
+      if (best < 0 || d < Math.abs(items[best].w - W)) best = w;
+    }
+    if (best >= 0) items[best].selected = true;
     Lampa.Select.show({
       title: 'Неделя · ' + (o.c ? countryName(o.c) : 'мир'), items: items,
       onSelect: function (a) { if (a.year) showYearPick(o, W, cfg); else if (a.w != null) cfg.pick(withNf(o, 'p', 'w' + a.w)); },
