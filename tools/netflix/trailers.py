@@ -16,6 +16,11 @@ audio by it and checks the same pattern on its own live TMDB lookups (netflix.js
 """
 import re
 
+# Version of the pick rules a cached card's tr was made with (cache field "trv"). Raise it when pick() changes:
+# the TMDB stage then refetches every card with a trailer once (matcher.Stage.plan, "retrailer"), so old
+# cache lines get the new rules without waiting for the 30-day refresh. 2: flag s for subtitled videos.
+VERSION = 2
+
 TYPES = {'Trailer': 'T', 'Teaser': 'Z', 'Clip': 'C'}
 RANK = {'Trailer': 0, 'Teaser': 1, 'Clip': 2}
 LANGS = ('ru', 'en')
@@ -40,6 +45,18 @@ def pick(videos):
         flags = 's' if SUBTITLED.search(v.get('name') or '') else ''
         tokens.append('%s:%s:%s' % (lang, TYPES[v['type']], v['key']) + (':' + flags if flags else ''))
     return ' '.join(tokens)
+
+
+def stale(entry):
+    """A cache line with a card whose tr was picked by older rules (VERSION)."""
+    return bool(entry.get('tr')) and (entry.get('trv') or 0) < VERSION
+
+
+def urgent(entry):
+    """Old rules most likely mislabel this card: a Russian key (dubbed or «(Субтитры)»), or an English key of a
+    title not in English (Dead-End Job: «[ENG SUB]» over Korean audio)."""
+    tr = entry.get('tr') or ''
+    return 'ru:' in tr or ('en:' in tr and (entry.get('ol') or 'en') != 'en')
 
 
 def valid(tr):

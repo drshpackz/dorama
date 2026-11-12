@@ -13,13 +13,16 @@ The stage decides what this run asks TMDB, within the budget:
      points (with --backfill: global first, then by points);
   3. titles of the last week whose card was checked 30 days ago or more (poster,
      Russian title and trailers come later for new releases);
-  4. low and none, once a month.
+  4. cards whose trailers were picked by older rules (trailers.VERSION), once: Russian keys and
+     English keys of titles not in English first, titles of the last week first, then by points;
+  5. low and none, once a month.
 """
 import datetime
 import math
 
 import nfdata
 import tmdb
+import trailers
 
 STALE_DAYS = 30
 CHECKPOINT = 250   # titles between cache saves in a long run
@@ -289,7 +292,17 @@ class Stage:
                    (self.cache.get(k) is None or self.cache[k].get('conf') == 'manual'))
 
     def plan(self, backfill):
-        manual, new, refresh, recheck = [], [], [], []
+        manual, new, refresh, retrailer, recheck = [], [], [], [], []
+
+        def card_due(key, e, entry):
+            if self.recent(e) and stale(entry, self.today):
+                refresh.append(('refresh', key))
+            elif trailers.stale(entry):
+                # One refetch of the card for the trailer rules of trailers.VERSION (flag s).
+                pts = sum(11 - r[3] for r in e.country)
+                retrailer.append(((0 if trailers.urgent(entry) else 1, 0 if self.recent(e) else 1, -pts, key),
+                                  ('refresh', key)))
+
         for key in sorted(self.ents):
             e, want, entry = self.ents[key], self.want[key], self.cache.get(key)
             if want is False:
@@ -297,8 +310,8 @@ class Stage:
             if want is not None:
                 if not usable(entry, want):
                     manual.append(('manual', key))
-                elif self.recent(e) and stale(entry, self.today):
-                    refresh.append(('refresh', key))
+                else:
+                    card_due(key, e, entry)
                 continue
             if entry is None or entry.get('conf') == 'manual':
                 pts = sum(11 - r[3] for r in e.country)
@@ -306,11 +319,11 @@ class Stage:
                 order = (glob, -pts, key) if backfill else (0 if self.recent(e) else 1, glob, -pts, key)
                 new.append((order, ('match', key)))
             elif entry.get('conf') in ('high', 'medium'):
-                if self.recent(e) and stale(entry, self.today):
-                    refresh.append(('refresh', key))
+                card_due(key, e, entry)
             elif stale(entry, self.today):
                 recheck.append(((entry.get('checked') or '', key), ('match', key)))
-        return manual + [x[1] for x in sorted(new)] + refresh + [x[1] for x in sorted(recheck)]
+        return (manual + [x[1] for x in sorted(new)] + refresh + [x[1] for x in sorted(retrailer)] +
+                [x[1] for x in sorted(recheck)])
 
     def run(self, client, src, backfill, checkpoint=None):
         """Do the planned work until it ends or TMDB stops; stats by outcome."""

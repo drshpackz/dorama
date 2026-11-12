@@ -36,7 +36,7 @@ BAD_LIMIT = 20       # other 4xx answers in a run before the stage stops
 UA = 'dorama-netflix-top10/1 (+https://github.com/drshpackz/dorama)'
 MEDIA = ('movie', 'tv')   # mt 0, 1
 REF = re.compile(r'^(?P<media>movie|tv)/(?P<id>\d+)$')
-ORDER = ('key', 'conf', 'score', 'mt', 'id', 'name', 'ru', 'p', 'yr', 'g', 'kw', 'oc', 'ol', 'va', 'tr',
+ORDER = ('key', 'conf', 'score', 'mt', 'id', 'name', 'ru', 'p', 'yr', 'g', 'kw', 'oc', 'ol', 'va', 'tr', 'trv',
          'alts', 'note', 'checked')
 
 
@@ -142,6 +142,7 @@ def card(d, mt):
         'ol': d.get('original_language') or None,
         'va': round(float(d.get('vote_average') or 0), 3),
         'tr': trailers.pick((d.get('videos') or {}).get('results') or []),
+        'trv': trailers.VERSION,
     }
 
 
