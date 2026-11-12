@@ -1568,14 +1568,22 @@
     return !O || !!((T.oc && O.ocSet[T.oc]) || (T.ol && O.olSet[T.ol]));
   }
   function passRelease(T, v) { var R = RELEASE[v], yr = relYear(T); return !R || !R.to || (!!yr && yr >= R.from && yr <= R.to); }
-  // Год выхода для «Года выхода» и сортировок по нему. Фильм мирового топа, вышедший больше чем за 40 лет до
-  // первой недели в топе, — тёзка из TMDB (The Man from Toronto 1933, 365 Days 1922, Spellbound 1945): год
-  // неизвестен, пока конвейер не пересоберёт данные (overrides.json). Top Gun 1986 и «Могила светлячков» 1988
-  // (мир 2022 и 2024) остаются; ручное сопоставление (cf 3) не трогаем.
-  var REL_GAP = 40;
+  // Год выхода для «Года выхода» и сортировок по нему. Фильм мирового топа со старым годом TMDB может быть тёзкой
+  // (пока конвейер не пересоберёт данные с overrides.json): тогда год неизвестен. Признаки тёзки — по id TMDB,
+  // который растёт со временем добавления: настоящая классика в TMDB с первых лет (id < 100 000), безвестный
+  // старый фильм добавлен позже. Старше 15 лет и id ≥ 100 000 — тёзка (телефильм «Mary, Mother of Jesus» 1999
+  // вместо «Mary» 2024, «Navarasa» 2005). Старше 40 лет — тёзка, кроме ранней записи TMDB (id < 20 000), которая
+  // не поднималась выше 5-го места мира: High Plains Drifter 1973 (№10 в 2025) остаётся, Spellbound 1945 (№2),
+  // The Man from Toronto 1933, 365 Days 1922 — нет. Top Gun 1986, «Могила светлячков» 1988 и Титаник остаются;
+  // ручное сопоставление (cf 3) не трогаем.
+  var REL_GAP = 40, REL_OLD = 15, REL_LATE_ID = 100000, REL_EARLY_ID = 20000;
   function relYear(T) {
+    var gap;
     if (!T.yr) return 0;
-    if (T.k === 0 && T.cf !== 3 && typeof T.gf === 'number' && T.gf >= 0 && weekYear(T.gf) - T.yr > REL_GAP) return 0;
+    if (T.k !== 0 || T.cf === 3 || typeof T.gf !== 'number' || T.gf < 0) return T.yr;
+    gap = weekYear(T.gf) - T.yr;
+    if (gap > REL_OLD && T.id >= REL_LATE_ID) return 0;
+    if (gap > REL_GAP && !(T.id < REL_EARLY_ID && T.gb >= 5)) return 0;
     return T.yr;
   }
   // Фасеты тайтла. skip — фасет, который не проверять (живые счётчики); chart — недельный чарт:
