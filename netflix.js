@@ -2756,8 +2756,18 @@
     el.find('.nf-info__title').html(esc(info[0]) + (info[2] ? '<span class="nf-info__orig">' + esc(info[2]) + '</span>' : ''));
     el.find('.nf-info__facts').text(info[1] || '');
   }
+  // Недели сезона в мировом топе и его лучшее место — null, если в мировом топе его не было.
+  function seasonTop(sid) {
+    var list = D.global && D.global.bySid[sid], ws = {}, w = 0, b = 0, i;
+    if (!list || !list.length) return null;
+    for (i = 0; i < list.length; i++) {
+      if (!ws[list[i].W]) { ws[list[i].W] = 1; w++; }
+      if (!b || list[i].pl < b) b = list[i].pl;
+    }
+    return { w: w, b: b };
+  }
   function cardInfo(nf) {
-    var T = D.T[nf.n], hk = nf.rec || nf.hk, parts = [], lab, x, cs, now;
+    var T = D.T[nf.n], hk = nf.rec || nf.hk, parts = [], lab, x, cs, now, sm, whole;
     if (!T) return null;
     lab = seasonLong(slabel(nf.sid));
     if (hk) {
@@ -2782,8 +2792,17 @@
     if (x > 1) parts.push('№1 ' + x + ' нед. подряд');
     if (nf.v) parts.push(viewsLabel(nf.v));
     if (nf.h) parts.push(hoursLabel(nf.h));
-    if (!nf.pl && !nf.cpl && !hk && T.gw) parts.push('в мировом топе ' + T.gw + ' нед.' + (T.gb ? ' · лучшее №' + T.gb : ''));
-    if (!nf.pl && !nf.cpl && T.c1 && hk !== 'c1') parts.push('№1 в ' + T.c1 + ' ' + plural(T.c1, 'стране', 'странах', 'странах') + ' за всё время');
+    // Итоги тайтла (gw, gb, c1) — у сериала целиком. Под названием с сезоном недели и лучшее место — самого
+    // сезона (global.bySid); чего по сезону нет, подписано как итог всего сериала.
+    sm = !!lab && nf.sid != null && (!D.index || sidsOf(T.n).length > 1);
+    whole = [];
+    if (!nf.pl && !nf.cpl && !hk) {
+      x = sm && D.global ? seasonTop(nf.sid) : null;
+      if (x) parts.push('в мировом топе ' + x.w + ' нед. · лучшее №' + x.b);
+      else if (T.gw) whole.push('в мировом топе ' + T.gw + ' нед.' + (T.gb ? ' · лучшее №' + T.gb : ''));
+    }
+    if (!nf.pl && !nf.cpl && T.c1 && hk !== 'c1') whole.push('№1 в ' + T.c1 + ' ' + plural(T.c1, 'стране', 'странах', 'странах') + ' за всё время');
+    if (whole.length) parts.push((sm ? 'весь сериал: ' : '') + whole.join(' · '));
     if (now && !hk) {
       cs = nowCountries(T.n, nf.sid);
       x = nf.wk == null ? 'сейчас ' : '';
