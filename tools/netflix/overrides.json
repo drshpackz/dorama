@@ -1,8 +1,15 @@
 {
 "_how": "Ручные правки конвейера (README.md, раздел «Правки»). Ключ — ключ тайтла: tv:<show_title> или film:<show_title>, у тёзок — с #. Операции: tmdb \"tv/<id>\" | \"movie/<id>\" | null; hide true; split [{countries, from, to, tmdb, ru, tr, lv, hide}, …, {последняя часть — всё остальное, ключ остаётся}]; merge \"<ключ>\" | false; ru \"<своё русское название>\"; tr \"ru:T:<ключ YouTube> en:T:<ключ>\" | \"\"; lv 1 | 0; why — заметка.",
+"film:365 Days": {"tmdb": "movie/664413", "why": "польский «365 dni» 2020: Netflix вёл его в списке фильмов на английском (24.04–08.05.2022, рядом с «365 Days: This Day»); не «365 Days» 1922 года"},
+"film:Annapoorni": {"tmdb": "movie/1111580", "why": "тамильский «Annapoorani» 2023 (мир 07.01.2024, Мальдивы, Маврикий, Оман); не «Annapoorni» 1978 года"},
+"film:Bullet Train Explosion": {"tmdb": "movie/1276073", "why": "японский фильм Netflix 2025 (мир 27.04.2025); не фильм 1975 года с тем же оригинальным названием «新幹線大爆破»"},
 "film:Face to Face": {"tmdb": "movie/1146759", "why": "египетский «وش في وش» 2023, восемь арабских стран 2024; не Бергман 1976 (r3 §4.4)"},
+"film:Mary Mother of Jesus": {"tmdb": "movie/1243381", "why": "фильм Netflix «Mary» 2024 (мир 08.12.2024); не телефильм «Mary, Mother of Jesus» 1999 года"},
 "film:Midnight Sun": {"split": [{"countries": ["KR"], "from": "2025-01-01", "tmdb": null}, {"tmdb": "movie/419478"}], "why": "Корея 2025 — другой фильм, оригинальное название уводило к мюзиклу «태양의 노래»; остальное — Midnight Sun 2018 (r3 §4.4)"},
+"film:River Wild": {"tmdb": "movie/1000475", "why": "River Wild 2023 (мир и США 06.08.2023, Бельгия 03.2024); не «Wild River» 1960 года"},
+"film:Spellbound": {"split": [{"countries": ["PH"], "to": "2023-12-31", "tmdb": "movie/667691"}, {"tmdb": "movie/592983"}], "why": "Филиппины 05.2023 — филиппинский «Spellbound» 2023; остальное — мультфильм Netflix 2024 (мир 24.11.2024); не Хичкок 1945 года"},
 "film:The King": {"split": [{"countries": ["KR"], "tmdb": "movie/434724"}, {"tmdb": "movie/504949"}], "why": "Корея 2023 — «더 킹» 2017; Россия 2021 и Швеция — The King 2019 Netflix (r3 §4.4)"},
+"film:The Man from Toronto": {"tmdb": "movie/667739", "why": "фильм Netflix 2022 (мир 26.06.2022; TMDB датирует его 23.12.2022); не британский фильм 1933 года"},
 "film:The Rise of Igbinogun": {"hide": true, "why": "Нигерия 2023, в TMDB не найден (r3 §4.4)"},
 "tv:The Club": {"tmdb": "tv/136125", "why": "турецкий «Kulüp» 2021; El club из What We Watched — мексиканский тёзка (r3 §4.4)"}
 }

@@ -438,14 +438,65 @@
       else done(code);
     }
   }
+  // Манифест с сети снимает «без связи»; копия из netflix_ver (offline) перезапрашивается фоном.
   function setManifest(json, offline) {
     if (D.man && D.man.b !== json.b) resetData();
-    D.man = json; D.manAt = Date.now(); D.offline = offline;
-    if (offline) D.offlineNoted = false;
+    D.man = json; D.manAt = Date.now(); D.offline = offline; D.manNext = null;
+    if (offline) { D.offlineNoted = false; manifestLater(); return; }
+    D.manDelay = 0;
+    if (D.manTimer) { clearTimeout(D.manTimer); D.manTimer = 0; }
+    setTimeout(function () { cachePrune(json); }, 5000);
+  }
+  // Без сети на старте: манифест спрашивается фоном через 30 с (дальше вдвое, до 10 мин), при событии online
+  // и при открытии экрана (не чаще раза в 30 с). Та же сборка — данные снова с сети; новая — в D.manNext,
+  // её применит следующий boot (экран на старых данных не сбрасывается посреди показа).
+  var MAN_RETRY = 30000, MAN_RETRY_MAX = 600000;
+  function manifestLater() {
+    if (D.manTimer) return;
+    D.manDelay = Math.min(D.manDelay ? D.manDelay * 2 : MAN_RETRY, MAN_RETRY_MAX);
+    D.manTimer = setTimeout(function () { D.manTimer = 0; manifestRetry(true); }, D.manDelay);
+  }
+  function manifestRetry(force) {
+    if (!D.offline || D.manBusy || (!force && Date.now() - (D.manTry || 0) < MAN_RETRY)) return;
+    D.manTry = Date.now();
+    D.manBusy = true;
+    network().silent(base() + 'manifest.json?t=' + Date.now(), function (json) {
+      D.manBusy = false;
+      if (!json || typeof json !== 'object' || !json.files) { manifestLater(); return; }
+      if (json.schema === SCHEMA) storageSet('netflix_ver', json);
+      if (D.man && D.man.b === json.b) setManifest(json, false);
+      else D.manNext = json;
+    }, function () { D.manBusy = false; manifestLater(); }, false, { timeout: T_MANIFEST });
+  }
+  // Кэш запросов Lampa (IndexedDB lampa_cache, таблица other, reguest.js cacheName) хранит файлы по адресу с
+  // ?v=<хеш> и сам не чистится: каждая недельная сборка — ещё ≈ 1,2 МБ на ТВ. После смены сборки удаляем
+  // свои записи с хешем не из этого манифеста (только диапазон ключей нашего адреса).
+  function cachePrune(man) {
+    var db = Lampa.Cache && Lampa.Cache.db, pre, tx, store, range, req;
+    if (!man || !man.b || !man.files || !db || !window.IDBKeyRange || storageGet('netflix_cache_b', '') === man.b) return;
+    pre = 'request_[' + base().replace(/^https?:\/\//i, '');
+    try {
+      tx = db.transaction(['other'], 'readwrite');
+      store = tx.objectStore('other');
+      range = window.IDBKeyRange.bound(pre, pre + '\uffff');
+      req = store.openKeyCursor ? store.openKeyCursor(range) : store.openCursor(range);
+      req.onsuccess = function (e) {
+        var cur = e.target.result, m;
+        if (!cur) return;
+        m = /^(.+?)\?v=([^\]]*)\]/.exec(String(cur.key).slice(pre.length));
+        if (m && (man.files[m[1]] || man.b) !== m[2]) store['delete'](cur.key);
+        cur['continue']();
+      };
+      tx.oncomplete = function () { storageSet('netflix_cache_b', man.b); };
+    } catch (ex) { log('cache prune', ex && ex.message); }
   }
 
-  // Манифест + home: всё, что нужно первому показу. done(err): 0, код HTTP или 'schema'.
+  // Манифест + home: всё, что нужно первому показу. done(err): 0, код HTTP или 'schema'. Заглушки home
+  // ищутся уже после показа, фоном (stubQueue): экран не ждёт TMDB.
   function boot(done) {
+    dataHooks();
+    if (D.manNext) setManifest(D.manNext, false);
+    else if (D.offline) manifestRetry(false);
     if (D.man && Date.now() - D.manAt < MANIFEST_TTL) { afterManifest(); return; }
     loadManifest(function (code) {
       if (code) { done(code); return; }
@@ -455,7 +506,8 @@
       if (D.man.schema !== SCHEMA) { done('schema'); return; }
       load('home', function (err) {
         if (err) { done(err); return; }
-        fillStubs(D.homeStubs || [], STUB_WAIT, function () { done(0); });
+        done(0);
+        stubQueue(D.homeStubs || []);
       });
     }
   }
@@ -617,26 +669,61 @@
   // Еженедельная сборка на GitHub идёт без ключа TMDB, поэтому новые тайтлы недели приходят заглушками
   // (id null). Плагин находит их сам через встроенный в Lampa TMDB (TMDB.api + TMDB.key, как dorama.js)
   // и помнит находку в Storage: при следующем открытии карточка сразу с постером и русским названием.
-  // Ищем только то, что на экране: карточки home и две последние недели открытой страны. Промах
-  // повторяется не чаще раза в неделю.
-  var STUB_KEY = 'netflix_stub_tmdb', STUB_MAX = 400, STUB_WAIT = 3000, STUB_RETRY = 7 * 24 * 3600 * 1000, STUB_PAR = 3;
-  var STUB = { cache: null, busy: {}, net: null };
-  function stubKey(T) { return (isTv(T) ? 'tv:' : 'movie:') + String(T.t || '').toLowerCase(); }
+  // Экран не ждёт поиска: ряды рисуются сразу, найденное дописывается в уже нарисованные карточки
+  // (refreshStubCards). Ищется то, что на экране: home, ряды по событию line (видимые — первыми),
+  // сетки и две последние недели открытой страны. Совпадение берётся только явное (stubPick), промах
+  // повторяется раз в неделю, находка перепроверяется через 30 дней. Сеть упала — пауза на сессию.
+  var STUB_KEY = 'netflix_stub_tmdb2', STUB_OLD = 'netflix_stub_tmdb', STUB_MAX = 500, STUB_PAR = 4, STUB_T = 8000;
+  var STUB_RETRY = 7 * DAY;          // промах ищется снова не раньше
+  var STUB_LIFE = 30 * DAY;          // находка перепроверяется (постер и русское название приходят позже)
+  var STUB_THIN = 3 * DAY;           // находка без постера или русского названия — раньше
+  var STUB_SKIP = 600000;            // тайтл с сетевой ошибкой не ищется 10 минут
+  var STUB_PAUSE = 120000, STUB_PAUSE_MAX = 1800000;   // три ошибки сети подряд — пауза, дальше вдвое
+  var STUB_OPEN_WAIT = 7000;         // OK на заглушке ждёт поиска, потом — поиск Lampa
+  var STUB = { cache: null, busy: {}, queued: {}, queue: [], running: 0, cbs: {}, net: null, fails: 0, pause: 0,
+    downUntil: 0, failAt: {}, timer: 0, saving: 0, dirty: null, rows: [], hooked: false, home: null, homeMap: null };
+  // Языки стран чарта (как COUNTRY_LANG в tools/netflix/matcher.py): язык оригинала «свой» для страны.
+  var COUNTRY_LANGS = 'KR:ko;JP:ja;TW:zh cn;HK:cn zh;TH:th;VN:vi;ID:id;PH:tl;MY:ms id;IN:hi ta te ml kn mr bn pa gu;' +
+    'PK:ur hi;BD:bn hi;TR:tr;IL:he;EG:ar;SA:ar;AE:ar;KW:ar;QA:ar;BH:ar;OM:ar;JO:ar;LB:ar;MA:ar fr;BR:pt;PT:pt;' +
+    'MX:es;AR:es;CO:es;CL:es;PE:es;ES:es;UY:es;PY:es;BO:es;EC:es;VE:es;CR:es;GT:es;HN:es;SV:es;NI:es;PA:es;DO:es;' +
+    'FR:fr;BE:fr nl;CH:de fr it;DE:de;AT:de;IT:it;PL:pl;CZ:cs;SK:sk cs;HU:hu;RO:ro;BG:bg;GR:el;CY:el;HR:hr;RS:sr;' +
+    'SI:sl;UA:uk;RU:ru;LT:lt;LV:lv;EE:et;NL:nl;DK:da;NO:no nb;SE:sv;FI:fi;IS:is;NG:yo;KE:sw;ZA:af zu;LU:fr de;' +
+    'GP:fr;MQ:fr;RE:fr;NC:fr;MU:fr;CA:fr';
+  var CLANG = null;
+  function countryLangs(code) {
+    var parts, i, f;
+    if (!CLANG) {
+      CLANG = {};
+      parts = COUNTRY_LANGS.split(';');
+      for (i = 0; i < parts.length; i++) { f = parts[i].split(':'); CLANG[f[0]] = f[1].split(' '); }
+    }
+    return CLANG[code] || [];
+  }
+
+  // Ключ кэша: тип, номер тайтла (стабилен между сборками) и название — тёзки не делят находку.
+  function stubKey(T) { return (isTv(T) ? 'tv:' : 'movie:') + T.n + ':' + String(T.t || '').toLowerCase(); }
   function stubCache() {
-    if (!STUB.cache) { STUB.cache = storageGet(STUB_KEY, {}); if (!STUB.cache || typeof STUB.cache !== 'object') STUB.cache = {}; }
+    if (!STUB.cache) {
+      STUB.cache = storageGet(STUB_KEY, {});
+      if (!STUB.cache || typeof STUB.cache !== 'object') STUB.cache = {};
+      // Старый кэш (ключ по названию, тёзки без проверки) — выбросить: там ошибочные находки.
+      try { if (Lampa.Storage.erase && window.localStorage && window.localStorage.getItem(STUB_OLD) !== null) Lampa.Storage.erase(STUB_OLD); } catch (e) {}
+    }
     return STUB.cache;
   }
+  function stubReady() { return !!(Lampa.TMDB && Lampa.TMDB.api && Lampa.TMDB.key); }
   function genreMask(ids) {
     var table = (D.index && D.index.genres) || [], m = 0, i, x;
     for (i = 0; i < (ids || []).length; i++) { x = table.indexOf(ids[i]); if (x >= 0) m |= 1 << x; }
     return m;
   }
+  // Находка из кэша — в тайтл. T.stub: id не из данных, а найден здесь (его можно перепроверить).
   function applyStub(T) {
     var e;
-    if (!T || T.id || !T.t) return;
+    if (!T || !T.t || (T.id && !T.stub)) return;
     e = stubCache()[stubKey(T)];
     if (!e || !e.id) return;
-    T.id = e.id; T.mt = e.mt;
+    T.id = e.id; T.mt = e.mt; T.stub = true;
     if (e.ru) T.ru = e.ru;
     if (e.p) T.p = e.p;
     if (e.yr) T.yr = e.yr;
@@ -645,49 +732,204 @@
     if (e.ol) T.ol = e.ol;
     if (e.g && !T.g) T.g = genreMask(e.g);
   }
-  // Год, когда тайтл впервые попал в топ: мир (gf), иначе первый год с очками (py).
-  function stubYear(T) {
-    var ys = years(), i;
-    if (typeof T.gf === 'number' && T.gf >= 0) return weekYear(T.gf);
-    for (i = 0; i < (T.py || []).length; i++) if (T.py[i]) return ys[i] || 0;
-    return 0;
+
+  // ---- Что известно о заглушке: год попадания в топ, новинка ли, страны и языки, номер сезона ----
+  // Год — первый год с заметными очками (≥ 3 и ≥ 2 % лучшего: пара недель тёзки давно не в счёт) или год первой
+  // недели в мировом топе. Новинка — тайтл мирового топа, впервые попавший в него не раньше 8 недель назад (и без
+  // заметных очков в прошлые годы): мировой топ — почти всегда премьеры. В чартах стран старое кино — обычное дело.
+  function stubWhen(T) {
+    var ys = years(), py = T.py || [], max = 0, first = -1, last = ys.length - 1, gy = 0, y0, i;
+    for (i = 0; i < py.length; i++) if (py[i] > max) max = py[i];
+    for (i = 0; i < py.length; i++) if (py[i] >= 3 && py[i] >= max / 50) { first = i; break; }
+    if (typeof T.gf === 'number' && T.gf >= 0) gy = weekYear(T.gf);
+    y0 = first >= 0 ? ys[first] || 0 : 0;
+    if (gy && (!y0 || gy < y0)) y0 = gy;
+    if (!y0) y0 = ys[last] || new Date().getFullYear();
+    return { y0: y0, isNew: !!gy && T.gf >= lastW() - 8 && (first < 0 || first === last) };
   }
-  function normTitle(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9À-ɏЀ-ӿ]+/g, ''); }
-  // Поиск en-US по английскому названию: только точное совпадение имени, вышедшее не позже года попадания
-  // в топ, ближайшее к нему; затем детали ru-RU — русское название, постер, жанры, страна.
-  function stubFind(T, done) {
-    var tv = isTv(T), want = normTitle(T.t), y = stubYear(T), key = '&api_key=' + Lampa.TMDB.key();
-    function year(r) { return parseInt(String((tv ? r.first_air_date : r.release_date) || '').slice(0, 4), 10) || 0; }
-    STUB.net.silent(Lampa.TMDB.api('search/' + (tv ? 'tv' : 'movie') + '?query=' + encodeURIComponent(T.t) + '&language=en-US' + key), function (json) {
-      var list = (json && json.results) || [], best = null, i, r, ry, d;
-      for (i = 0; i < list.length; i++) {
-        r = list[i];
-        if (normTitle(tv ? r.name : r.title) !== want && normTitle(tv ? r.original_name : r.original_title) !== want) continue;
-        ry = year(r);
-        if (y && ry && ry > y) continue;
-        d = y && ry ? y - ry : 99;
-        if (!best || d < best.d) best = { r: r, d: d };
+  // Страны, где тайтл в топе: последняя неделя (home.c) и открытые страны (свои тайтлы и год недель).
+  function stubPlaces(T) {
+    var cc = {}, n = T.n, map, k, C, W, j, lists, list, p, codes, i;
+    if (STUB.home !== D.home) {
+      STUB.home = D.home; STUB.homeMap = map = {};
+      lists = (D.home && D.home.c) || {};
+      for (k in lists) {
+        if (!lists.hasOwnProperty(k)) continue;
+        for (j = 0; j < 2; j++) {
+          list = (lists[k] && lists[k][j]) || [];
+          for (p = 0; p < list.length; p++) { i = owner(list[p]); if (i != null) (map[i] || (map[i] = [])).push(k); }
+        }
       }
-      if (!best) { done(null); return; }
-      STUB.net.silent(Lampa.TMDB.api((tv ? 'tv/' : 'movie/') + best.r.id + '?language=ru-RU' + key), function (det) {
-        done(stubEntry(best.r, det, tv, year(best.r)));
-      }, function () { done(stubEntry(best.r, null, tv, year(best.r))); }, false, { timeout: 8000 });
-    }, function () { done(false); }, false, { timeout: 8000 });
+    }
+    codes = (STUB.homeMap && STUB.homeMap[n]) || [];
+    for (i = 0; i < codes.length; i++) cc[codes[i]] = 1;
+    for (k in D.cty) {
+      if (!D.cty.hasOwnProperty(k) || cc[k]) continue;
+      C = D.cty[k];
+      if (C.local.indexOf(n) >= 0) { cc[k] = 1; continue; }
+      for (W = C.f.length - 1; W >= 0 && W >= C.f.length - 52 && !cc[k]; W--) {
+        lists = [C.f[W] || [], C.t[W] || []];
+        for (j = 0; j < 2 && !cc[k]; j++) for (p = 0; p < lists[j].length; p++) if (owner(lists[j][p]) === n) { cc[k] = 1; break; }
+      }
+    }
+    return cc;
+  }
+  // Самый старший сезон Netflix у тайтла («Season 5» → 5): у сериала TMDB сезонов должно быть не меньше.
+  function stubSeason(T) {
+    var sids = [], best = 1, ss, k, i, m;
+    if (D.index) sids = sidsOf(T.n);
+    else {
+      ss = (D.home && D.home.ss) || {};
+      for (k in ss) if (ss.hasOwnProperty(k) && ss[k] && ss[k][0] === T.n) sids.push(+k);
+    }
+    for (i = 0; i < sids.length; i++) if ((m = /^С(\d+)/.exec(seasonShort(slabel(sids[i]))))) best = Math.max(best, +m[1]);
+    return best;
+  }
+  function stubCtx(T) {
+    var w = stubWhen(T), cc = stubPlaces(T), langs = {}, ncc = 0, k, l, i;
+    for (k in cc) if (cc.hasOwnProperty(k)) { ncc++; l = countryLangs(k); for (i = 0; i < l.length; i++) langs[l[i]] = 1; }
+    return { tv: isTv(T), y0: w.y0, isNew: w.isNew, cc: cc, ncc: ncc, langs: langs, lg: T.lg, season: isTv(T) ? stubSeason(T) : 0,
+      strict: stubStrict(T.t), loose: normTitle(T.t), sole: false };
+  }
+
+  // ---- Имя ----
+  function normTitle(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9À-ɏЀ-ӿ]+/g, ''); }
+  // Строго: без пробелов и обычной пунктуации, но «!», «#», «?» и «&» значимы (Heist! и #Unknown — другие фильмы).
+  function stubStrict(s) { return String(s || '').toLowerCase().replace(/[\s.,:;'’‘`"«»()\/\-–—]+/g, ''); }
+  // Коэффициент Дайса по парам букв.
+  function dice(a, b) {
+    var m = {}, hit = 0, i, k;
+    if (a.length < 2 || b.length < 2) return 0;
+    for (i = 0; i < a.length - 1; i++) { k = a.substr(i, 2); m[k] = (m[k] || 0) + 1; }
+    for (i = 0; i < b.length - 1; i++) { k = b.substr(i, 2); if (m[k]) { m[k]--; hit++; } }
+    return 2 * hit / (a.length + b.length - 2);
+  }
+  // Уровень совпадения имени: 3 — то же название, 2 — то же без знаков, 1 — одно содержит другое с лишним
+  // словом (Anne Rice's Mayfair Witches → Mayfair Witches; не «The», не номер), 0.5 — похоже (Дайс ≥ 0,5),
+  // только когда поиск вернул единственный ответ (PoliticaLupin → Political Lupin).
+  function stubName(ctx, r) {
+    var names = ctx.tv ? [r.name, r.original_name] : [r.title, r.original_title], best = 0, i, l, a, b;
+    for (i = 0; i < 2; i++) {
+      if (!names[i]) continue;
+      if (ctx.strict && stubStrict(names[i]) === ctx.strict) return 3;
+      l = normTitle(names[i]);
+      if (!l || !ctx.loose) continue;
+      if (l === ctx.loose) { best = Math.max(best, 2); continue; }
+      a = l.length < ctx.loose.length ? l : ctx.loose;
+      b = a === l ? ctx.loose : l;
+      if (a.length >= 5 && a.length / b.length >= 0.6 && b.indexOf(a) >= 0 && b.replace(a, '').replace(/[0-9]+/g, '').length >= 4) best = Math.max(best, 1);
+      else if (ctx.sole && dice(a, b) >= 0.5) best = Math.max(best, 0.5);
+    }
+    return best;
+  }
+
+  // ---- Оценка кандидата поиска ----
+  // Жёстко: не вышел позже года попадания в топ (+1); у новинки — только её год ±1, старше — лишь единственный
+  // ответ поиска со «своей» страной или языком. Очки: год, известность (голоса), язык списка Netflix,
+  // страна производства или язык оригинала среди стран, где тайтл в топе.
+  function stubScore(ctx, r, lv) {
+    var yr = parseInt(String((ctx.tv ? r.first_air_date : r.release_date) || '').slice(0, 4), 10) || 0;
+    var d = yr ? ctx.y0 - yr : 99, dd, vc = r.vote_count || 0, ol = r.original_language || '', oc = r.origin_country || [];
+    var loc = false, bad = false, s = 0, i;
+    if (yr && yr > ctx.y0 + 1) return null;
+    // Сезон N у Netflix: сериал начался примерно на N − 1 лет раньше.
+    if (yr && ctx.season > 1 && d > 0) d = Math.max(0, d - ctx.season + 1);
+    dd = Math.abs(d);
+    for (i = 0; i < oc.length; i++) if (ctx.cc[oc[i]]) loc = true;
+    if (ol && ol !== 'en' && ctx.langs[ol]) loc = true;
+    if (ctx.isNew && dd > 1 && !(ctx.sole && loc)) return null;
+    s += dd <= 1 ? 25 : dd <= 5 ? 10 : dd <= 15 ? 0 : yr ? -15 : -10;
+    s += Math.min(15, 5 * Math.log(1 + vc) / Math.LN10);
+    if (ctx.lg === 0) { bad = ol !== 'en'; s += bad ? -20 : 10; }
+    else if (ctx.lg === 1) { bad = !ol || ol === 'en'; s += bad ? -20 : 10; }
+    else if (ctx.ncc && ol && ol !== 'en' && !ctx.langs[ol]) s -= 10;
+    if (loc) s += 15;
+    return { r: r, lv: lv, s: s, yr: yr, dd: dd, vc: vc, loc: loc, bad: bad };
+  }
+  function stubCands(ctx, list) {
+    var out = [], i, lv, c;
+    for (i = 0; i < list.length; i++) {
+      if (!list[i] || !list[i].id) continue;
+      lv = stubName(ctx, list[i]);
+      if (lv && (c = stubScore(ctx, list[i], lv))) out.push(c);
+    }
+    return out;
+  }
+  // Явный победитель или null. Берётся лучший уровень имени (есть точное — «Heist!» и «#Unknown» не в счёт).
+  // Один кандидат — нужен свой год ±1, своя страна или (точное имя) хоть 20 голосов, а старше 15 лет — 100
+  // (безвестный фильм 1989 года не попадает в топ Индонезии 2026-го). Несколько — отрыв ≥ 15 очков
+  // и нет второго известного тёзки (≥ 50 голосов), которого лучший не обходит ни годом, ни своей страной, ни
+  // впятеро голосами: «The Mummy» 1999 и 2017 — заглушка. Единственный известный (≥ 100) среди безвестных (< 20) — +10.
+  function stubPick(cands) {
+    var top = 0, pool = [], known = [], dom = null, i, a, x;
+    function sc(c) { return c.s + (c === dom ? 10 : 0); }
+    for (i = 0; i < cands.length; i++) if (cands[i].lv > top) top = cands[i].lv;
+    for (i = 0; i < cands.length; i++) if (cands[i].lv === top) pool.push(cands[i]);
+    if (!pool.length) return null;
+    for (i = 0; i < pool.length; i++) if (pool[i].vc >= 20) known.push(pool[i]);
+    if (known.length === 1 && known[0].vc >= 100) dom = known[0];
+    pool.sort(function (p, q) { return sc(q) - sc(p) || q.vc - p.vc; });
+    a = pool[0];
+    // Язык TMDB против списка Netflix (англ. / не англ.) у одиночки — отказ, если только не то же имя и год.
+    if (a.bad && pool.length === 1 && !(top === 3 && a.dd <= 1)) return null;
+    if (!(a.dd <= 1 || a.loc || (top === 3 && a.vc >= (a.dd > 15 ? 100 : 20)))) return null;
+    if (pool.length === 1) return a;
+    for (i = 1; i < pool.length; i++) {
+      x = pool[i];
+      if (x.vc >= 50 && a.vc < 5 * x.vc && !(a.dd <= 1 && x.dd > 1) && !(a.loc && !x.loc)) return null;
+    }
+    return sc(a) - sc(pool[1]) >= 15 ? a : null;
+  }
+  // Детали ru-RU: фильм короче 40 минут — короткий метр; у сериала сезонов меньше, чем у Netflix (TMDB может
+  // не знать идущего сезона: допуск один), — не он (Ghosts С5 — не немецкие «Призраки» в один сезон).
+  function stubDetailsOk(ctx, det) {
+    if (!det || !det.id) return false;
+    if (!ctx.tv && det.runtime > 0 && det.runtime < 40) return false;
+    if (ctx.tv && ctx.season > 2 && det.number_of_seasons > 0 && det.number_of_seasons < ctx.season - 1) return false;
+    return true;
+  }
+  // Поиск en-US по английскому названию, оценка, детали ru-RU лучшего (не прошёл — следующий явный).
+  // done(entry) — находка, done(null) — промах, done(false) — ошибка сети (не запоминается).
+  function stubFind(T, done) {
+    var ctx = stubCtx(T), key = '&api_key=' + Lampa.TMDB.key(), tries = 0;
+    if (!STUB.net) STUB.net = new Lampa.Reguest();
+    STUB.net.silent(Lampa.TMDB.api('search/' + (ctx.tv ? 'tv' : 'movie') + '?query=' + encodeURIComponent(T.t) + '&language=en-US' + key), function (json) {
+      var list = (json && json.results) || [];
+      ctx.sole = list.length === 1 && (json.total_results || 1) === 1;
+      check(stubCands(ctx, list));
+    }, function () { done(false); }, false, { timeout: STUB_T });
+    function check(cands) {
+      var c = stubPick(cands);
+      if (!c) { done(null); return; }
+      STUB.net.silent(Lampa.TMDB.api((ctx.tv ? 'tv/' : 'movie/') + c.r.id + '?language=ru-RU' + key), function (det) {
+        if (stubDetailsOk(ctx, det)) { done(stubEntry(c.r, det, ctx.tv, c.yr)); return; }
+        if (++tries > 1) { done(null); return; }
+        cands.splice(cands.indexOf(c), 1);
+        check(cands);
+      }, function () { done(false); }, false, { timeout: STUB_T });
+    }
   }
   function stubEntry(r, det, tv, yr) {
     var e = { id: r.id, mt: tv ? 1 : 0, p: (det && det.poster_path) || r.poster_path || '', yr: yr,
       va: Math.round((r.vote_average || 0) * 10), ol: r.original_language || '', g: r.genre_ids || [] }, ru = det && (tv ? det.name : det.title), i;
-    if (ru && /[а-яё]/i.test(ru)) e.ru = ru;
+    // ru-RU без перевода отдаёт оригинал: украинское название — не русское.
+    if (ru && /[а-яё]/i.test(ru) && !/[іїєґ]/i.test(ru)) e.ru = ru;
     if (det && det.genres) { e.g = []; for (i = 0; i < det.genres.length; i++) e.g.push(det.genres[i].id); }
     if (tv && r.origin_country && r.origin_country.length) e.oc = r.origin_country[0];
     else if (det && det.production_countries && det.production_countries.length) e.oc = det.production_countries[0].iso_3166_1;
     return e;
   }
-  // Запомнить находку (или промах) и поджать кэш до STUB_MAX — выбрасываются самые старые.
+  // Запомнить находку (или промах) и поджать кэш до STUB_MAX — выбрасываются самые старые. В Storage — не чаще
+  // раза в 2 с: на холодном старте ответы идут пачкой, а кэш — ~100 КБ JSON.
   function stubSave(k, e) {
-    var cache = stubCache(), keys = [], i;
+    var cache = stubCache();
     cache[k] = e || { at: Date.now() };
     if (e) cache[k].at = Date.now();
+    if (!STUB.saving) STUB.saving = setTimeout(stubFlush, 2000);
+  }
+  function stubFlush() {
+    var cache = stubCache(), keys = [], i;
+    STUB.saving = 0;
     for (i in cache) if (cache.hasOwnProperty(i)) keys.push(i);
     if (keys.length > STUB_MAX) {
       keys.sort(function (a, b) { return (cache[a].at || 0) - (cache[b].at || 0); });
@@ -695,36 +937,197 @@
     }
     storageSet(STUB_KEY, cache);
   }
-  // Найти заглушки из списка по STUB_PAR разом. done() — когда нашлось всё или прошло wait мс; остальное
-  // дорабатывает тихо и попадёт на экран при следующем открытии.
-  function fillStubs(list, wait, done) {
-    var todo = [], cache = stubCache(), now = Date.now(), pos = 0, running = 0, over = false, timer, i, T, k, e;
-    function finish() { if (over) return; over = true; clearTimeout(timer); if (done) done(); }
-    if (!Lampa.TMDB || !Lampa.TMDB.api || !Lampa.TMDB.key) { finish(); return; }
+
+  // ---- Очередь ----
+  // Нужно ли искать: заглушка без находки, промах старше недели, находка старше 30 дней (без постера или
+  // русского названия — 3 дней). Тайтл с ошибкой сети этой сессии ждёт 10 минут.
+  function stubWanted(T, now) {
+    var k, e, f;
+    if (!T || !T.t || T.n == null || (T.id && !T.stub)) return false;
+    k = stubKey(T);
+    f = STUB.failAt[k];
+    if (f && now - f < STUB_SKIP) return false;
+    e = stubCache()[k];
+    if (!e) return true;
+    if (e.id) return now - (e.at || 0) > (e.ru && e.p ? STUB_LIFE : STUB_THIN);
+    return now - (e.at || 0) > STUB_RETRY;
+  }
+  // Поставить в очередь; front — вперёд (ряд на экране). Ищется по STUB_PAR разом, экран не ждёт.
+  function stubQueue(list, front) {
+    var now = Date.now(), add = [], i, j, T, k;
+    if (!list || !list.length || !stubReady()) return;
     for (i = 0; i < list.length; i++) {
       T = list[i];
-      if (!T || T.id || !T.t) continue;
-      k = stubKey(T); e = cache[k];
-      if (STUB.busy[k] || (e && (e.id || now - (e.at || 0) < STUB_RETRY))) continue;
-      STUB.busy[k] = true; todo.push(T);
+      if (!stubWanted(T, now)) continue;
+      k = stubKey(T);
+      if (STUB.busy[k]) continue;
+      if (STUB.queued[k]) {
+        if (!front) continue;
+        for (j = 0; j < STUB.queue.length; j++) if (stubKey(STUB.queue[j]) === k) { STUB.queue.splice(j, 1); break; }
+      }
+      STUB.queued[k] = true;
+      add.push(T);
     }
-    if (!todo.length) { finish(); return; }
-    if (!STUB.net) STUB.net = new Lampa.Reguest();
-    timer = setTimeout(finish, wait);
-    function next() {
-      var T1, k1;
-      if (pos >= todo.length) { if (!running) finish(); return; }
-      T1 = todo[pos++]; k1 = stubKey(T1); running++;
-      stubFind(T1, function (found) {
-        running--;
-        delete STUB.busy[k1];
-        if (found !== false) stubSave(k1, found);
-        applyStub(T1);
-        applyStub(D.T[T1.n]);
-        next();
+    if (!add.length) return;
+    STUB.queue = front ? add.concat(STUB.queue) : STUB.queue.concat(add);
+    stubPump();
+  }
+  function stubPump() {
+    var now = Date.now(), T, k;
+    if (now < STUB.downUntil) {
+      if (!STUB.timer) STUB.timer = setTimeout(function () { STUB.timer = 0; stubPump(); }, STUB.downUntil - now + 50);
+      return;
+    }
+    while (STUB.running < STUB_PAR && STUB.queue.length) {
+      T = STUB.queue.shift();
+      k = stubKey(T);
+      delete STUB.queued[k];
+      if (!STUB.busy[k] && stubWanted(T, Date.now())) stubRun(T);
+    }
+  }
+  function stubRun(T) {
+    var k = stubKey(T);
+    STUB.busy[k] = true;
+    STUB.running++;
+    stubFind(T, function (found) {
+      var list = STUB.cbs[k] || [], cur = D.T[T.n], i;
+      STUB.running--;
+      delete STUB.busy[k]; delete STUB.cbs[k];
+      if (found === false) stubFailed(k);
+      else {
+        STUB.fails = 0; STUB.pause = 0;
+        stubSave(k, found);
+        if (found) {
+          applyStub(T);
+          if (cur && cur !== T) applyStub(cur);
+          stubDirty(T.n);
+        }
+      }
+      for (i = 0; i < list.length; i++) list[i](found);
+      stubPump();
+    });
+  }
+  // Ошибка сети: тайтл ждёт 10 минут; три подряд — пауза всем поискам (2 мин, дальше вдвое, до 30 мин).
+  function stubFailed(k) {
+    var now = Date.now();
+    STUB.failAt[k] = now;
+    if (now < STUB.downUntil || ++STUB.fails < 3) return;   // начатые до паузы не удлиняют её
+    STUB.fails = 0;
+    STUB.pause = Math.min(STUB.pause ? STUB.pause * 2 : STUB_PAUSE, STUB_PAUSE_MAX);
+    STUB.downUntil = now + STUB.pause;
+    log('stub pause', STUB.pause);
+  }
+  function stubDown() { return !stubReady() || Date.now() < STUB.downUntil; }
+  // Найти сейчас, вне очереди (OK на заглушке). cb(true | null | false).
+  function stubNow(T, cb) {
+    var k = stubKey(T), i;
+    if (T.id) { cb(true); return; }
+    if (stubDown()) { cb(false); return; }
+    (STUB.cbs[k] || (STUB.cbs[k] = [])).push(cb);
+    if (STUB.busy[k]) return;
+    if (STUB.queued[k]) {
+      delete STUB.queued[k];
+      for (i = 0; i < STUB.queue.length; i++) if (stubKey(STUB.queue[i]) === k) { STUB.queue.splice(i, 1); break; }
+    }
+    stubRun(T);
+  }
+
+  // ---- Найденное — в уже нарисованные карточки ----
+  // Данные карточки: id, постер, рейтинг, русское название (у сериала — name и title, Lampa дублирует).
+  function stubPatch(c, T) {
+    var name;
+    if (!c || !T || !T.id || c.id) return false;
+    name = titleName(T);
+    c.id = T.id;
+    if (T.p) c.poster_path = T.p;
+    if (T.va) c.vote_average = T.va / 10;
+    if (isTv(T)) {
+      c.name = name;
+      if (c.title !== undefined) c.title = name;
+      c.first_air_date = T.yr ? String(T.yr) : '';
+      if (c.release_date !== undefined) c.release_date = c.first_air_date;
+    } else {
+      c.title = name;
+      c.release_date = T.yr ? String(T.yr) : '';
+    }
+    return true;
+  }
+  function stubImg(p) {
+    if (Lampa.Api && Lampa.Api.img) return Lampa.Api.img(p);
+    return Lampa.TMDB.image('t/p/w300' + p);
+  }
+  function stubDirty(n) {
+    if (!STUB.dirty) { STUB.dirty = {}; setTimeout(refreshStubCards, 150); }
+    STUB.dirty[n] = true;
+  }
+  // Ряды, о которых сказало событие line (ещё не созданные карточки), и карточки в DOM всех экранов:
+  // card_data, .card__title, .card__img (если картинка уже грузилась; иначе Lampa возьмёт poster_path сама).
+  function refreshStubCards() {
+    var dirty = STUB.dirty || {}, els, el, img, tl, vote, src, c, T, i, j, d;
+    STUB.dirty = null;
+    for (i = 0; i < STUB.rows.length; i++) {
+      d = STUB.rows[i];
+      for (j = 0; j < (d.results || []).length; j++) { c = d.results[j]; if (c && c.nf && dirty[c.nf.n]) stubPatch(c, D.T[c.nf.n]); }
+    }
+    try { els = document.querySelectorAll('.activity .card'); } catch (e) { return; }
+    for (i = 0; i < els.length; i++) {
+      el = els[i]; c = el.card_data;
+      if (!c || !c.nf || !dirty[c.nf.n] || !(T = D.T[c.nf.n]) || !T.id) continue;
+      stubPatch(c, T);
+      if (c.id !== T.id) continue;
+      tl = el.querySelector('.card__title');
+      if (tl) tl.textContent = titleName(T);
+      // Рейтинг — как interaction/card/module/ratting.js при создании карточки.
+      if (T.va && !el.querySelector('.card__vote') && (tl = el.querySelector('.card__view'))) {
+        vote = document.createElement('div');
+        vote.className = 'card__vote';
+        vote.textContent = (T.va / 10).toFixed(1);
+        tl.appendChild(vote);
+      }
+      img = el.querySelector('.card__img');
+      if (img && T.p && img.getAttribute('src')) { src = stubImg(T.p); if (img.src !== src) img.src = src; }
+    }
+  }
+  // Событие line рядов плагина: заглушки ряда (первые ROW_MAX) — в очередь, видимый ряд — вперёд.
+  function stubLine(e) {
+    var d = e && e.data, list = [], any = false, i, c, T;
+    if (!d || !d.nf_row || !d.results) return;
+    if (e.type === 'destroy') { i = STUB.rows.indexOf(d); if (i >= 0) STUB.rows.splice(i, 1); return; }
+    if (e.type !== 'create' && e.type !== 'append' && e.type !== 'visible') return;
+    for (i = 0; i < d.results.length && i < ROW_MAX; i++) {
+      c = d.results[i];
+      if (!c || !c.nf || c.id || !(T = D.T[c.nf.n])) continue;
+      any = true;
+      if (T.id) stubDirty(T.n); else list.push(T);
+    }
+    if (!any) return;
+    if (STUB.rows.indexOf(d) < 0) { STUB.rows.push(d); if (STUB.rows.length > 200) STUB.rows.shift(); }
+    stubQueue(list, e.type === 'visible');
+  }
+  // Заглушки в карточках открытого экрана (сетка «Ещё»: у неё нет события line) — вперёд.
+  function stubScan() {
+    var list = [], els, c, T, i;
+    try { els = document.querySelectorAll('.activity--active .card'); } catch (e) { return; }
+    for (i = 0; i < els.length && list.length < 60; i++) {
+      c = els[i].card_data;
+      if (!c || !c.nf || c.id || !(T = D.T[c.nf.n])) continue;
+      if (T.id) stubDirty(T.n); else list.push(T);
+    }
+    stubQueue(list, true);
+  }
+  // Подписки слоя данных — один раз, из boot: события line, новые страны, возврат сети.
+  function dataHooks() {
+    if (STUB.hooked) return;
+    STUB.hooked = true;
+    if (Lampa.Listener && Lampa.Listener.follow) Lampa.Listener.follow('line', function (e) { try { stubLine(e); } catch (ex) { log('stub line', ex && ex.message); } });
+    onData(function (file) { if (file.indexOf('country/') === 0) stubQueue(countryStubs([file])); });
+    try {
+      window.addEventListener('online', function () {
+        STUB.downUntil = 0; STUB.fails = 0; STUB.pause = 0;
+        stubPump();
+        if (D.offline) manifestRetry(true);
       });
-    }
-    for (i = 0; i < STUB_PAR; i++) next();
+    } catch (e) {}
   }
   // Заглушки двух последних недель открытых стран (files вида 'country/XX').
   function countryStubs(files) {
@@ -2064,15 +2467,33 @@
     if (nf && nf.rec && hasScreen('netflix_grid')) { openGrid(currentNf(), 'hall:' + nf.rec); return; }
     openTitle(card);
   }
-  // Страница TMDB; заглушка без id — поиск Lampa по английскому названию (§7).
+  // Страница TMDB. Тайтл уже найден (T.id, в т. ч. заглушка, найденная после показа ряда) — его страница;
+  // заглушка — «Ищу в TMDB…», поиск сейчас (stubNow) и страница; промах или 7 с — поиск Lampa (§7).
   function openTitle(card) {
-    var nf = card.nf, T;
-    if (!card.id) {
-      T = nf ? D.T[nf.n] : null;
-      searchTitle(T ? T.t : (card.original_title || card.original_name || card.title || card.name));
+    var nf = card.nf, T = nf ? D.T[nf.n] : null;
+    if (!card.id && T && T.id) { stubPatch(card, T); stubDirty(T.n); }
+    if (card.id) {
+      Lampa.Activity.push({ url: card.url, component: 'full', id: card.id, method: card.name ? 'tv' : 'movie', card: card, source: card.source || 'tmdb' });
       return;
     }
-    Lampa.Activity.push({ url: card.url, component: 'full', id: card.id, method: card.name ? 'tv' : 'movie', card: card, source: card.source || 'tmdb' });
+    if (!T) { searchTitle(card.original_title || card.original_name || card.title || card.name); return; }
+    stubOpen(card, T);
+  }
+  function stubOpen(card, T) {
+    var act = activeObj(), e = stubCache()[stubKey(T)], over = false, timer;
+    function finish(found) {
+      if (over) return;
+      over = true;
+      clearTimeout(timer);
+      if (activeObj() !== act) return;   // ушли с экрана, пока искали
+      if (found && T.id) { stubPatch(card, T); openTitle(card); }
+      else searchTitle(T.t);
+    }
+    // Недавний промах или TMDB недоступен — сразу поиск Lampa, без ожидания.
+    if (stubDown() || (e && !e.id && Date.now() - (e.at || 0) < STUB_RETRY)) { searchTitle(T.t); return; }
+    noty('Ищу в TMDB…');
+    timer = setTimeout(function () { finish(false); }, STUB_OPEN_WAIT);
+    stubNow(T, finish);
   }
   function searchTitle(text) {
     if (Lampa.Search && Lampa.Search.open) Lampa.Search.open({ input: text });
@@ -2621,11 +3042,16 @@
   // (Lampa ставит его только на ТВ, controller.js:396-403).
   var FOCUS = { data: null, act: null };
   function noteFocus(data) { FOCUS.data = data; FOCUS.act = activeObj(); }
-  // Данные экрана: манифест и home, затем files (ждём до 20 с). done(0 | код ошибки).
+  // Данные экрана: манифест и home, затем files (ждём до 20 с). done(0 | код ошибки). Заглушки — после
+  // показа: две последние недели стран экрана и карточки, уже нарисованные на нём (сетки, История, Зал).
   function loadScreen(files, done) {
     boot(function (err) {
       if (err) { done(err); return; }
-      waitFor(files, WAIT_MAX, function () { fillStubs(countryStubs(files), STUB_WAIT, function () { done(0); }); }, done);
+      waitFor(files, WAIT_MAX, function () {
+        done(0);
+        stubQueue(countryStubs(files));
+        setTimeout(stubScan, 0);
+      }, done);
     });
   }
   // §9: своё пустое состояние, не comp.empty() (там кнопка CUB, main.js:21-48, category.js:30-56).
